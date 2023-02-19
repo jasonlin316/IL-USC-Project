@@ -36,9 +36,9 @@ class SAGE(nn.Module):
         super().__init__()
         self.layers = nn.ModuleList()
         # three-layer GraphSAGE-mean
-        self.layers.append(dglnn.SAGEConv(in_size, hid_size, 'mean'))
-        self.layers.append(dglnn.SAGEConv(hid_size, hid_size, 'mean'))
-        self.layers.append(dglnn.SAGEConv(hid_size, hid_size, 'mean'))
+        self.layers.append(dglnn.GraphConv(in_size, hid_size))
+        self.layers.append(dglnn.GraphConv(hid_size, hid_size))
+        self.layers.append(dglnn.GraphConv(hid_size, hid_size))
         self.hid_size = hid_size
         self.predictor = nn.Sequential(
             nn.Linear(hid_size, hid_size),

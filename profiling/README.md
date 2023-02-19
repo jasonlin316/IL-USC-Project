@@ -6,6 +6,8 @@ ogbn-products full-graph training:
 ogbn-products mini-batch training:
 `python products.py --algo mini`
 
-for reddit, yelp, amazon:
-`python sage.py --dataset $(dataset_name)`
+ogbn-citation full-graph training:
+`python link.py --algo full`
 
+ogbn-citation mini-batch training:
+`python link.py --algo mini`

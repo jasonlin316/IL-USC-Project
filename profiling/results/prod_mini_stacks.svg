@@ -1,0 +1,1161 @@
+<?xml version="1.0" standalone="no"?>
+<!DOCTYPE svg PUBLIC "-//W3C//DTD SVG 1.1//EN" "http://www.w3.org/Graphics/SVG/1.1/DTD/svg11.dtd">
+<svg version="1.1" width="1200" height="358" onload="init(evt)" viewBox="0 0 1200 358" xmlns="http://www.w3.org/2000/svg" xmlns:xlink="http://www.w3.org/1999/xlink">
+<!-- Flame graph stack visualization. See https://github.com/brendangregg/FlameGraph for latest version, and http://www.brendangregg.com/flamegraphs.html for examples. -->
+<!-- NOTES:  -->
+<defs>
+	<linearGradient id="background" y1="0" y2="1" x1="0" x2="0" >
+		<stop stop-color="#eeeeee" offset="5%" />
+		<stop stop-color="#eeeeb0" offset="95%" />
+	</linearGradient>
+</defs>
+<style type="text/css">
+	text { font-family:Verdana; font-size:12px; fill:rgb(0,0,0); }
+	#search, #ignorecase { opacity:0.1; cursor:pointer; }
+	#search:hover, #search.show, #ignorecase:hover, #ignorecase.show { opacity:1; }
+	#subtitle { text-anchor:middle; font-color:rgb(160,160,160); }
+	#title { text-anchor:middle; font-size:17px}
+	#unzoom { cursor:pointer; }
+	#frames > *:hover { stroke:black; stroke-width:0.5; cursor:pointer; }
+	.hide { display:none; }
+	.parent { opacity:0.5; }
+</style>
+<script type="text/ecmascript">
+<![CDATA[
+	"use strict";
+	var details, searchbtn, unzoombtn, matchedtxt, svg, searching, currentSearchTerm, ignorecase, ignorecaseBtn;
+	function init(evt) {
+		details = document.getElementById("details").firstChild;
+		searchbtn = document.getElementById("search");
+		ignorecaseBtn = document.getElementById("ignorecase");
+		unzoombtn = document.getElementById("unzoom");
+		matchedtxt = document.getElementById("matched");
+		svg = document.getElementsByTagName("svg")[0];
+		searching = 0;
+		currentSearchTerm = null;
+
+		// use GET parameters to restore a flamegraphs state.
+		var params = get_params();
+		if (params.x && params.y)
+			zoom(find_group(document.querySelector('[x="' + params.x + '"][y="' + params.y + '"]')));
+                if (params.s) search(params.s);
+	}
+
+	// event listeners
+	window.addEventListener("click", function(e) {
+		var target = find_group(e.target);
+		if (target) {
+			if (target.nodeName == "a") {
+				if (e.ctrlKey === false) return;
+				e.preventDefault();
+			}
+			if (target.classList.contains("parent")) unzoom(true);
+			zoom(target);
+			if (!document.querySelector('.parent')) {
+				// we have basically done a clearzoom so clear the url
+				var params = get_params();
+				if (params.x) delete params.x;
+				if (params.y) delete params.y;
+				history.replaceState(null, null, parse_params(params));
+				unzoombtn.classList.add("hide");
+				return;
+			}
+
+			// set parameters for zoom state
+			var el = target.querySelector("rect");
+			if (el && el.attributes && el.attributes.y && el.attributes._orig_x) {
+				var params = get_params()
+				params.x = el.attributes._orig_x.value;
+				params.y = el.attributes.y.value;
+				history.replaceState(null, null, parse_params(params));
+			}
+		}
+		else if (e.target.id == "unzoom") clearzoom();
+		else if (e.target.id == "search") search_prompt();
+		else if (e.target.id == "ignorecase") toggle_ignorecase();
+	}, false)
+
+	// mouse-over for info
+	// show
+	window.addEventListener("mouseover", function(e) {
+		var target = find_group(e.target);
+		if (target) details.nodeValue = "Function: " + g_to_text(target);
+	}, false)
+
+	// clear
+	window.addEventListener("mouseout", function(e) {
+		var target = find_group(e.target);
+		if (target) details.nodeValue = ' ';
+	}, false)
+
+	// ctrl-F for search
+	// ctrl-I to toggle case-sensitive search
+	window.addEventListener("keydown",function (e) {
+		if (e.keyCode === 114 || (e.ctrlKey && e.keyCode === 70)) {
+			e.preventDefault();
+			search_prompt();
+		}
+		else if (e.ctrlKey && e.keyCode === 73) {
+			e.preventDefault();
+			toggle_ignorecase();
+		}
+	}, false)
+
+	// functions
+	function get_params() {
+		var params = {};
+		var paramsarr = window.location.search.substr(1).split('&');
+		for (var i = 0; i < paramsarr.length; ++i) {
+			var tmp = paramsarr[i].split("=");
+			if (!tmp[0] || !tmp[1]) continue;
+			params[tmp[0]]  = decodeURIComponent(tmp[1]);
+		}
+		return params;
+	}
+	function parse_params(params) {
+		var uri = "?";
+		for (var key in params) {
+			uri += key + '=' + encodeURIComponent(params[key]) + '&';
+		}
+		if (uri.slice(-1) == "&")
+			uri = uri.substring(0, uri.length - 1);
+		if (uri == '?')
+			uri = window.location.href.split('?')[0];
+		return uri;
+	}
+	function find_child(node, selector) {
+		var children = node.querySelectorAll(selector);
+		if (children.length) return children[0];
+	}
+	function find_group(node) {
+		var parent = node.parentElement;
+		if (!parent) return;
+		if (parent.id == "frames") return node;
+		return find_group(parent);
+	}
+	function orig_save(e, attr, val) {
+		if (e.attributes["_orig_" + attr] != undefined) return;
+		if (e.attributes[attr] == undefined) return;
+		if (val == undefined) val = e.attributes[attr].value;
+		e.setAttribute("_orig_" + attr, val);
+	}
+	function orig_load(e, attr) {
+		if (e.attributes["_orig_"+attr] == undefined) return;
+		e.attributes[attr].value = e.attributes["_orig_" + attr].value;
+		e.removeAttribute("_orig_"+attr);
+	}
+	function g_to_text(e) {
+		var text = find_child(e, "title").firstChild.nodeValue;
+		return (text)
+	}
+	function g_to_func(e) {
+		var func = g_to_text(e);
+		// if there's any manipulation we want to do to the function
+		// name before it's searched, do it here before returning.
+		return (func);
+	}
+	function update_text(e) {
+		var r = find_child(e, "rect");
+		var t = find_child(e, "text");
+		var w = parseFloat(r.attributes.width.value) -3;
+		var txt = find_child(e, "title").textContent.replace(/\([^(]*\)$/,"");
+		t.attributes.x.value = parseFloat(r.attributes.x.value) + 3;
+
+		// Smaller than this size won't fit anything
+		if (w < 2 * 12 * 0.59) {
+			t.textContent = "";
+			return;
+		}
+
+		t.textContent = txt;
+		var sl = t.getSubStringLength(0, txt.length);
+		// check if only whitespace or if we can fit the entire string into width w
+		if (/^ *$/.test(txt) || sl < w)
+			return;
+
+		// this isn't perfect, but gives a good starting point
+		// and avoids calling getSubStringLength too often
+		var start = Math.floor((w/sl) * txt.length);
+		for (var x = start; x > 0; x = x-2) {
+			if (t.getSubStringLength(0, x + 2) <= w) {
+				t.textContent = txt.substring(0, x) + "..";
+				return;
+			}
+		}
+		t.textContent = "";
+	}
+
+	// zoom
+	function zoom_reset(e) {
+		if (e.attributes != undefined) {
+			orig_load(e, "x");
+			orig_load(e, "width");
+		}
+		if (e.childNodes == undefined) return;
+		for (var i = 0, c = e.childNodes; i < c.length; i++) {
+			zoom_reset(c[i]);
+		}
+	}
+	function zoom_child(e, x, ratio) {
+		if (e.attributes != undefined) {
+			if (e.attributes.x != undefined) {
+				orig_save(e, "x");
+				e.attributes.x.value = (parseFloat(e.attributes.x.value) - x - 10) * ratio + 10;
+				if (e.tagName == "text")
+					e.attributes.x.value = find_child(e.parentNode, "rect[x]").attributes.x.value + 3;
+			}
+			if (e.attributes.width != undefined) {
+				orig_save(e, "width");
+				e.attributes.width.value = parseFloat(e.attributes.width.value) * ratio;
+			}
+		}
+
+		if (e.childNodes == undefined) return;
+		for (var i = 0, c = e.childNodes; i < c.length; i++) {
+			zoom_child(c[i], x - 10, ratio);
+		}
+	}
+	function zoom_parent(e) {
+		if (e.attributes) {
+			if (e.attributes.x != undefined) {
+				orig_save(e, "x");
+				e.attributes.x.value = 10;
+			}
+			if (e.attributes.width != undefined) {
+				orig_save(e, "width");
+				e.attributes.width.value = parseInt(svg.width.baseVal.value) - (10 * 2);
+			}
+		}
+		if (e.childNodes == undefined) return;
+		for (var i = 0, c = e.childNodes; i < c.length; i++) {
+			zoom_parent(c[i]);
+		}
+	}
+	function zoom(node) {
+		var attr = find_child(node, "rect").attributes;
+		var width = parseFloat(attr.width.value);
+		var xmin = parseFloat(attr.x.value);
+		var xmax = parseFloat(xmin + width);
+		var ymin = parseFloat(attr.y.value);
+		var ratio = (svg.width.baseVal.value - 2 * 10) / width;
+
+		// XXX: Workaround for JavaScript float issues (fix me)
+		var fudge = 0.0001;
+
+		unzoombtn.classList.remove("hide");
+
+		var el = document.getElementById("frames").children;
+		for (var i = 0; i < el.length; i++) {
+			var e = el[i];
+			var a = find_child(e, "rect").attributes;
+			var ex = parseFloat(a.x.value);
+			var ew = parseFloat(a.width.value);
+			var upstack;
+			// Is it an ancestor
+			if (0 == 0) {
+				upstack = parseFloat(a.y.value) > ymin;
+			} else {
+				upstack = parseFloat(a.y.value) < ymin;
+			}
+			if (upstack) {
+				// Direct ancestor
+				if (ex <= xmin && (ex+ew+fudge) >= xmax) {
+					e.classList.add("parent");
+					zoom_parent(e);
+					update_text(e);
+				}
+				// not in current path
+				else
+					e.classList.add("hide");
+			}
+			// Children maybe
+			else {
+				// no common path
+				if (ex < xmin || ex + fudge >= xmax) {
+					e.classList.add("hide");
+				}
+				else {
+					zoom_child(e, xmin, ratio);
+					update_text(e);
+				}
+			}
+		}
+		search();
+	}
+	function unzoom(dont_update_text) {
+		unzoombtn.classList.add("hide");
+		var el = document.getElementById("frames").children;
+		for(var i = 0; i < el.length; i++) {
+			el[i].classList.remove("parent");
+			el[i].classList.remove("hide");
+			zoom_reset(el[i]);
+			if(!dont_update_text) update_text(el[i]);
+		}
+		search();
+	}
+	function clearzoom() {
+		unzoom();
+
+		// remove zoom state
+		var params = get_params();
+		if (params.x) delete params.x;
+		if (params.y) delete params.y;
+		history.replaceState(null, null, parse_params(params));
+	}
+
+	// search
+	function toggle_ignorecase() {
+		ignorecase = !ignorecase;
+		if (ignorecase) {
+			ignorecaseBtn.classList.add("show");
+		} else {
+			ignorecaseBtn.classList.remove("show");
+		}
+		reset_search();
+		search();
+	}
+	function reset_search() {
+		var el = document.querySelectorAll("#frames rect");
+		for (var i = 0; i < el.length; i++) {
+			orig_load(el[i], "fill")
+		}
+		var params = get_params();
+		delete params.s;
+		history.replaceState(null, null, parse_params(params));
+	}
+	function search_prompt() {
+		if (!searching) {
+			var term = prompt("Enter a search term (regexp " +
+			    "allowed, eg: ^ext4_)"
+			    + (ignorecase ? ", ignoring case" : "")
+			    + "\nPress Ctrl-i to toggle case sensitivity", "");
+			if (term != null) search(term);
+		} else {
+			reset_search();
+			searching = 0;
+			currentSearchTerm = null;
+			searchbtn.classList.remove("show");
+			searchbtn.firstChild.nodeValue = "Search"
+			matchedtxt.classList.add("hide");
+			matchedtxt.firstChild.nodeValue = ""
+		}
+	}
+	function search(term) {
+		if (term) currentSearchTerm = term;
+
+		var re = new RegExp(currentSearchTerm, ignorecase ? 'i' : '');
+		var el = document.getElementById("frames").children;
+		var matches = new Object();
+		var maxwidth = 0;
+		for (var i = 0; i < el.length; i++) {
+			var e = el[i];
+			var func = g_to_func(e);
+			var rect = find_child(e, "rect");
+			if (func == null || rect == null)
+				continue;
+
+			// Save max width. Only works as we have a root frame
+			var w = parseFloat(rect.attributes.width.value);
+			if (w > maxwidth)
+				maxwidth = w;
+
+			if (func.match(re)) {
+				// highlight
+				var x = parseFloat(rect.attributes.x.value);
+				orig_save(rect, "fill");
+				rect.attributes.fill.value = "rgb(230,0,230)";
+
+				// remember matches
+				if (matches[x] == undefined) {
+					matches[x] = w;
+				} else {
+					if (w > matches[x]) {
+						// overwrite with parent
+						matches[x] = w;
+					}
+				}
+				searching = 1;
+			}
+		}
+		if (!searching)
+			return;
+		var params = get_params();
+		params.s = currentSearchTerm;
+		history.replaceState(null, null, parse_params(params));
+
+		searchbtn.classList.add("show");
+		searchbtn.firstChild.nodeValue = "Reset Search";
+
+		// calculate percent matched, excluding vertical overlap
+		var count = 0;
+		var lastx = -1;
+		var lastw = 0;
+		var keys = Array();
+		for (k in matches) {
+			if (matches.hasOwnProperty(k))
+				keys.push(k);
+		}
+		// sort the matched frames by their x location
+		// ascending, then width descending
+		keys.sort(function(a, b){
+			return a - b;
+		});
+		// Step through frames saving only the biggest bottom-up frames
+		// thanks to the sort order. This relies on the tree property
+		// where children are always smaller than their parents.
+		var fudge = 0.0001;	// JavaScript floating point
+		for (var k in keys) {
+			var x = parseFloat(keys[k]);
+			var w = matches[keys[k]];
+			if (x >= lastx + lastw - fudge) {
+				count += w;
+				lastx = x;
+				lastw = w;
+			}
+		}
+		// display matched percent
+		matchedtxt.classList.remove("hide");
+		var pct = 100 * count / maxwidth;
+		if (pct != 100) pct = pct.toFixed(1)
+		matchedtxt.firstChild.nodeValue = "Matched: " + pct + "%";
+	}
+]]>
+</script>
+<rect x="0.0" y="0" width="1200.0" height="358.0" fill="url(#background)"  />
+<text id="title" x="600.00" y="24" >ogbn-products/mini-batch</text>
+<text id="details" x="10.00" y="341" > </text>
+<text id="unzoom" x="10.00" y="24" class="hide">Reset Zoom</text>
+<text id="search" x="1090.00" y="24" >Search</text>
+<text id="ignorecase" x="1174.00" y="24" >ic</text>
+<text id="matched" x="1090.00" y="341" > </text>
+<g id="frames">
+<g >
+<title>nn.Module:_Linear_5 (249,399 us., 0.30%)</title><rect x="804.2" y="197" width="3.5" height="15.0" fill="rgb(220,66,27)" rx="2" ry="2" />
+<text  x="807.21" y="207.5" ></text>
+</g>
+<g >
+<title>dgl/backend/pytorch/sparse.py(1023):_gspmm (7,966,168 us., 9.53%)</title><rect x="449.6" y="117" width="112.5" height="15.0" fill="rgb(243,70,41)" rx="2" ry="2" />
+<text  x="452.60" y="127.5" >dgl/backend/p..</text>
+</g>
+<g >
+<title>dgl/ops/spmm.py(37):_gspmm (8,942,929 us., 10.70%)</title><rect x="440.2" y="133" width="126.2" height="15.0" fill="rgb(229,26,12)" rx="2" ry="2" />
+<text  x="443.15" y="143.5" >dgl/ops/spmm.py..</text>
+</g>
+<g >
+<title>dgl/backend/pytorch/tensor.py(274):_reshape (8,663 us., 0.01%)</title><rect x="784.5" y="117" width="0.1" height="15.0" fill="rgb(239,194,38)" rx="2" ry="2" />
+<text  x="787.48" y="127.5" ></text>
+</g>
+<g >
+<title>&lt;built-in_function__to_dlpack&gt; (38,911 us., 0.05%)</title><rect x="784.8" y="53" width="0.5" height="15.0" fill="rgb(211,180,32)" rx="2" ry="2" />
+<text  x="787.78" y="63.5" ></text>
+</g>
+<g >
+<title>dgl/frame.py(517):_fetch (9,845,700 us., 11.78%)</title><rect x="219.9" y="85" width="139.1" height="15.0" fill="rgb(208,17,52)" rx="2" ry="2" />
+<text  x="222.94" y="95.5" >dgl/frame.py(517)..</text>
+</g>
+<g >
+<title>&lt;built-in_method_clamp_of_type_object_at_0x7fbb46864b00&gt; (21,369 us., 0.03%)</title><rect x="697.5" y="101" width="0.3" height="15.0" fill="rgb(209,145,38)" rx="2" ry="2" />
+<text  x="700.46" y="111.5" ></text>
+</g>
+<g >
+<title>dgl/heterograph_index.py(651):_in_degrees (144,918 us., 0.17%)</title><rect x="697.8" y="101" width="2.0" height="15.0" fill="rgb(209,154,47)" rx="2" ry="2" />
+<text  x="700.76" y="111.5" ></text>
+</g>
+<g >
+<title>nn.Module:_SAGEConv_2 (3,877,590 us., 4.64%)</title><rect x="753.0" y="229" width="54.7" height="15.0" fill="rgb(251,57,44)" rx="2" ry="2" />
+<text  x="755.98" y="239.5" >nn.Mo..</text>
+</g>
+<g >
+<title>&lt;built-in_method_dropout_of_type_object_at_0x7fbb46864b00&gt; (306,619 us., 0.37%)</title><rect x="785.6" y="149" width="4.4" height="15.0" fill="rgb(254,123,52)" rx="2" ry="2" />
+<text  x="788.63" y="159.5" ></text>
+</g>
+<g >
+<title>dgl/backend/pytorch/tensor.py(282):_zeros (46,550 us., 0.06%)</title><rect x="783.6" y="53" width="0.7" height="15.0" fill="rgb(208,101,52)" rx="2" ry="2" />
+<text  x="786.62" y="63.5" ></text>
+</g>
+<g >
+<title>torch/nn/functional.py(1235):_dropout (306,619 us., 0.37%)</title><rect x="785.6" y="165" width="4.4" height="15.0" fill="rgb(245,125,28)" rx="2" ry="2" />
+<text  x="788.63" y="175.5" ></text>
+</g>
+<g >
+<title>&lt;built-in_method_zeros_of_type_object_at_0x7fbb46864b00&gt; (46,550 us., 0.06%)</title><rect x="783.6" y="37" width="0.7" height="15.0" fill="rgb(250,78,37)" rx="2" ry="2" />
+<text  x="786.62" y="47.5" ></text>
+</g>
+<g >
+<title>dgl/backend/pytorch/tensor.py(429):_zerocopy_to_dgl_ndarray (14,371 us., 0.02%)</title><rect x="217.9" y="69" width="0.2" height="15.0" fill="rgb(205,55,43)" rx="2" ry="2" />
+<text  x="220.93" y="79.5" ></text>
+</g>
+<g >
+<title>&lt;built-in_function_linear&gt; (2,240,611 us., 2.68%)</title><rect x="566.5" y="165" width="31.6" height="15.0" fill="rgb(250,202,24)" rx="2" ry="2" />
+<text  x="569.46" y="175.5" >&lt;b..</text>
+</g>
+<g >
+<title>torch/nn/modules/linear.py(113):_forward (1,009,397 us., 1.21%)</title><rect x="790.0" y="181" width="14.2" height="15.0" fill="rgb(229,170,6)" rx="2" ry="2" />
+<text  x="792.96" y="191.5" ></text>
+</g>
+<g >
+<title>&lt;built-in_function_linear&gt; (249,399 us., 0.30%)</title><rect x="804.2" y="165" width="3.5" height="15.0" fill="rgb(230,108,43)" rx="2" ry="2" />
+<text  x="807.21" y="175.5" ></text>
+</g>
+<g >
+<title>&lt;built-in_method_apply_of_FunctionMeta_object_at_0x4d0b2c0&gt; (2,094,124 us., 2.51%)</title><rect x="754.7" y="101" width="29.6" height="15.0" fill="rgb(241,19,19)" rx="2" ry="2" />
+<text  x="757.71" y="111.5" >&lt;b..</text>
+</g>
+<g >
+<title>nn.Module:_Linear_1 (2,727,665 us., 3.26%)</title><rect x="598.1" y="197" width="38.5" height="15.0" fill="rgb(221,10,10)" rx="2" ry="2" />
+<text  x="601.10" y="207.5" >nn...</text>
+</g>
+<g >
+<title>dgl/view.py(46):___call__ (29,565 us., 0.04%)</title><rect x="699.8" y="101" width="0.4" height="15.0" fill="rgb(246,86,3)" rx="2" ry="2" />
+<text  x="702.80" y="111.5" ></text>
+</g>
+<g >
+<title>&lt;built-in_method__record_function_enter_of_PyCapsule_object_at_0x7fbb30c84ba0&gt; (20,933,327 us., 25.05%)</title><rect x="894.4" y="245" width="295.6" height="15.0" fill="rgb(250,93,12)" rx="2" ry="2" />
+<text  x="897.40" y="255.5" >&lt;built-in_method__record_function_enter..</text>
+</g>
+<g >
+<title>dgl/backend/pytorch/tensor.py(429):_zerocopy_to_dgl_ndarray (144,918 us., 0.17%)</title><rect x="697.8" y="69" width="2.0" height="15.0" fill="rgb(214,209,34)" rx="2" ry="2" />
+<text  x="700.76" y="79.5" ></text>
+</g>
+<g >
+<title>dgl/utils/internal.py(1095):_recursive_apply (9,845,700 us., 11.78%)</title><rect x="219.9" y="213" width="139.1" height="15.0" fill="rgb(247,177,4)" rx="2" ry="2" />
+<text  x="222.94" y="223.5" >dgl/utils/interna..</text>
+</g>
+<g >
+<title>&lt;built-in_function_linear&gt; (1,051,587 us., 1.26%)</title><rect x="738.1" y="165" width="14.9" height="15.0" fill="rgb(217,24,25)" rx="2" ry="2" />
+<text  x="741.13" y="175.5" ></text>
+</g>
+<g >
+<title>torch/nn/functional.py(1235):_dropout (4,085,185 us., 4.89%)</title><rect x="359.0" y="197" width="57.7" height="15.0" fill="rgb(236,178,15)" rx="2" ry="2" />
+<text  x="361.99" y="207.5" >torch/..</text>
+</g>
+<g >
+<title>&lt;built-in_method_mul__of_Tensor_object_at_0x7fb99e52c770&gt; (166,208 us., 0.20%)</title><rect x="888.7" y="181" width="2.4" height="15.0" fill="rgb(233,24,44)" rx="2" ry="2" />
+<text  x="891.74" y="191.5" ></text>
+</g>
+<g >
+<title>&lt;built-in_method__record_function_enter_of_PyCapsule_object_at_0x7fbb30c84ba0&gt; (473,304 us., 0.57%)</title><rect x="874.2" y="213" width="6.7" height="15.0" fill="rgb(245,181,28)" rx="2" ry="2" />
+<text  x="877.23" y="223.5" ></text>
+</g>
+<g >
+<title>dgl/backend/pytorch/tensor.py(124):_astype (69,919 us., 0.08%)</title><rect x="562.1" y="117" width="1.0" height="15.0" fill="rgb(225,224,17)" rx="2" ry="2" />
+<text  x="565.09" y="127.5" ></text>
+</g>
+<g >
+<title>dgl/backend/pytorch/tensor.py(124):_astype (27,294 us., 0.03%)</title><rect x="696.9" y="117" width="0.4" height="15.0" fill="rgb(251,139,40)" rx="2" ry="2" />
+<text  x="699.92" y="127.5" ></text>
+</g>
+<g >
+<title>dgl/storages/pytorch_tensor.py(31):_fetch (9,845,700 us., 11.78%)</title><rect x="219.9" y="69" width="139.1" height="15.0" fill="rgb(237,209,51)" rx="2" ry="2" />
+<text  x="222.94" y="79.5" >dgl/storages/pyto..</text>
+</g>
+<g >
+<title>dgl/heterograph.py(4685):_update_all (8,942,929 us., 10.70%)</title><rect x="440.2" y="197" width="126.2" height="15.0" fill="rgb(216,16,29)" rx="2" ry="2" />
+<text  x="443.15" y="207.5" >dgl/heterograph..</text>
+</g>
+<g >
+<title>dgl/ops/spmm.py(37):_gspmm (3,951,936 us., 4.73%)</title><rect x="644.4" y="133" width="55.8" height="15.0" fill="rgb(233,92,25)" rx="2" ry="2" />
+<text  x="647.42" y="143.5" >dgl/o..</text>
+</g>
+<g >
+<title>torch/_ops.py(437):___call__ (473,304 us., 0.57%)</title><rect x="874.2" y="229" width="6.7" height="15.0" fill="rgb(208,77,27)" rx="2" ry="2" />
+<text  x="877.23" y="239.5" ></text>
+</g>
+<g >
+<title>dgl/ops/spmm.py(37):_gspmm (2,263,817 us., 2.71%)</title><rect x="753.7" y="133" width="31.9" height="15.0" fill="rgb(231,78,14)" rx="2" ry="2" />
+<text  x="756.66" y="143.5" >dg..</text>
+</g>
+<g >
+<title>torch/nn/modules/linear.py(113):_forward (2,240,611 us., 2.68%)</title><rect x="566.5" y="181" width="31.6" height="15.0" fill="rgb(237,38,27)" rx="2" ry="2" />
+<text  x="569.46" y="191.5" >to..</text>
+</g>
+<g >
+<title>dgl/storages/pytorch_tensor.py(10):__fetch_cpu (9,845,700 us., 11.78%)</title><rect x="219.9" y="53" width="139.1" height="15.0" fill="rgb(242,136,48)" rx="2" ry="2" />
+<text  x="222.94" y="63.5" >dgl/storages/pyto..</text>
+</g>
+<g >
+<title>&lt;built-in_method_dropout_of_type_object_at_0x7fbb46864b00&gt; (4,085,185 us., 4.89%)</title><rect x="359.0" y="181" width="57.7" height="15.0" fill="rgb(235,130,33)" rx="2" ry="2" />
+<text  x="361.99" y="191.5" >&lt;built..</text>
+</g>
+<g >
+<title>nn.Module:_Linear_4 (1,009,397 us., 1.21%)</title><rect x="790.0" y="197" width="14.2" height="15.0" fill="rgb(227,157,41)" rx="2" ry="2" />
+<text  x="792.96" y="207.5" ></text>
+</g>
+<g >
+<title>dgl/backend/__init__.py(141):_to_dgl_nd (14,371 us., 0.02%)</title><rect x="217.9" y="85" width="0.2" height="15.0" fill="rgb(244,80,15)" rx="2" ry="2" />
+<text  x="220.93" y="95.5" ></text>
+</g>
+<g >
+<title>&lt;built-in_method_type_of_Tensor_object_at_0x7fb99e537360&gt; (69,919 us., 0.08%)</title><rect x="562.1" y="101" width="1.0" height="15.0" fill="rgb(213,161,39)" rx="2" ry="2" />
+<text  x="565.09" y="111.5" ></text>
+</g>
+<g >
+<title>&lt;built-in_function_linear&gt; (1,009,397 us., 1.21%)</title><rect x="790.0" y="165" width="14.2" height="15.0" fill="rgb(244,134,39)" rx="2" ry="2" />
+<text  x="792.96" y="175.5" ></text>
+</g>
+<g >
+<title>products.py(88):_train (62,630,463 us., 74.95%)</title><rect x="10.0" y="277" width="884.4" height="15.0" fill="rgb(248,135,3)" rx="2" ry="2" />
+<text  x="13.00" y="287.5" >products.py(88):_train</text>
+</g>
+<g >
+<title>torch/optim/optimizer.py(246):_zero_grad (103,504 us., 0.12%)</title><rect x="892.9" y="261" width="1.5" height="15.0" fill="rgb(243,133,49)" rx="2" ry="2" />
+<text  x="895.94" y="271.5" ></text>
+</g>
+<g >
+<title>dgl/backend/pytorch/tensor.py(274):_reshape (10,447 us., 0.01%)</title><rect x="697.3" y="117" width="0.2" height="15.0" fill="rgb(247,158,21)" rx="2" ry="2" />
+<text  x="700.31" y="127.5" ></text>
+</g>
+<g >
+<title>torch/nn/modules/dropout.py(58):_forward (1,547,847 us., 1.85%)</title><rect x="700.2" y="181" width="21.9" height="15.0" fill="rgb(245,152,50)" rx="2" ry="2" />
+<text  x="703.22" y="191.5" >t..</text>
+</g>
+<g >
+<title>torch/_ops.py(437):___call__ (14,719,777 us., 17.62%)</title><rect x="10.1" y="181" width="207.8" height="15.0" fill="rgb(241,36,44)" rx="2" ry="2" />
+<text  x="13.07" y="191.5" >torch/_ops.py(437):___call__</text>
+</g>
+<g >
+<title>torch/optim/adam.py(257):_adam (848,274 us., 1.02%)</title><rect x="881.0" y="213" width="11.9" height="15.0" fill="rgb(228,36,32)" rx="2" ry="2" />
+<text  x="883.96" y="223.5" ></text>
+</g>
+<g >
+<title>torch/_ops.py(437):___call__ (65,380 us., 0.08%)</title><rect x="893.5" y="229" width="0.9" height="15.0" fill="rgb(226,43,51)" rx="2" ry="2" />
+<text  x="896.48" y="239.5" ></text>
+</g>
+<g >
+<title>dgl/dataloading/dataloader.py(492):__next_non_threaded (24,712,746 us., 29.57%)</title><rect x="10.0" y="245" width="349.0" height="15.0" fill="rgb(244,64,1)" rx="2" ry="2" />
+<text  x="13.01" y="255.5" >dgl/dataloading/dataloader.py(492):__next_non_t..</text>
+</g>
+<g >
+<title>dgl/heterograph_index.py(651):_in_degrees (22,611 us., 0.03%)</title><rect x="564.5" y="101" width="0.3" height="15.0" fill="rgb(228,48,34)" rx="2" ry="2" />
+<text  x="567.48" y="111.5" ></text>
+</g>
+<g >
+<title>nn.Module:_Dropout_2 (1,547,847 us., 1.85%)</title><rect x="700.2" y="197" width="21.9" height="15.0" fill="rgb(223,201,1)" rx="2" ry="2" />
+<text  x="703.22" y="207.5" >n..</text>
+</g>
+<g >
+<title>nn.Module:_Linear_2 (1,136,747 us., 1.36%)</title><rect x="722.1" y="197" width="16.0" height="15.0" fill="rgb(237,14,11)" rx="2" ry="2" />
+<text  x="725.08" y="207.5" ></text>
+</g>
+<g >
+<title>&lt;built-in_method_index_select_of_type_object_at_0x7fbb46864b00&gt; (9,822,431 us., 11.75%)</title><rect x="220.3" y="37" width="138.7" height="15.0" fill="rgb(205,123,38)" rx="2" ry="2" />
+<text  x="223.27" y="47.5" >&lt;built-in_method_..</text>
+</g>
+<g >
+<title>&lt;built-in_method_add__of_Tensor_object_at_0x7fb99e52c770&gt; (78,569 us., 0.09%)</title><rect x="884.8" y="181" width="1.1" height="15.0" fill="rgb(216,167,33)" rx="2" ry="2" />
+<text  x="887.77" y="191.5" ></text>
+</g>
+<g >
+<title>dgl/view.py(46):___call__ (21,143 us., 0.03%)</title><rect x="785.3" y="101" width="0.3" height="15.0" fill="rgb(219,78,49)" rx="2" ry="2" />
+<text  x="788.33" y="111.5" ></text>
+</g>
+<g >
+<title>&lt;built-in_method_zero__of_Tensor_object_at_0x7fb99e52cbd0&gt; (31,179 us., 0.04%)</title><rect x="892.9" y="245" width="0.5" height="15.0" fill="rgb(205,21,5)" rx="2" ry="2" />
+<text  x="895.94" y="255.5" ></text>
+</g>
+<g >
+<title>torch/nn/modules/linear.py(113):_forward (1,051,587 us., 1.26%)</title><rect x="738.1" y="181" width="14.9" height="15.0" fill="rgb(239,95,32)" rx="2" ry="2" />
+<text  x="741.13" y="191.5" ></text>
+</g>
+<g >
+<title>products.py(155):_&lt;module&gt; (83,563,851 us., 100.00%)</title><rect x="10.0" y="293" width="1180.0" height="15.0" fill="rgb(220,94,38)" rx="2" ry="2" />
+<text  x="13.00" y="303.5" >products.py(155):_&lt;module&gt;</text>
+</g>
+<g >
+<title>torch/nn/functional.py(1446):_relu (1,393,651 us., 1.67%)</title><rect x="807.7" y="229" width="19.7" height="15.0" fill="rgb(209,82,35)" rx="2" ry="2" />
+<text  x="810.74" y="239.5" ></text>
+</g>
+<g >
+<title>dgl/backend/pytorch/tensor.py(124):_astype (14,075 us., 0.02%)</title><rect x="784.3" y="117" width="0.2" height="15.0" fill="rgb(215,8,19)" rx="2" ry="2" />
+<text  x="787.28" y="127.5" ></text>
+</g>
+<g >
+<title>dgl/nn/pytorch/conv/sageconv.py(170):_forward (3,877,590 us., 4.64%)</title><rect x="753.0" y="213" width="54.7" height="15.0" fill="rgb(238,220,52)" rx="2" ry="2" />
+<text  x="755.98" y="223.5" >dgl/n..</text>
+</g>
+<g >
+<title>&lt;built-in_method_type_of_Tensor_object_at_0x7fb99e537360&gt; (14,075 us., 0.02%)</title><rect x="784.3" y="101" width="0.2" height="15.0" fill="rgb(239,208,47)" rx="2" ry="2" />
+<text  x="787.28" y="111.5" ></text>
+</g>
+<g >
+<title>dgl/ops/spmm.py(213):_func (2,263,817 us., 2.71%)</title><rect x="753.7" y="149" width="31.9" height="15.0" fill="rgb(208,38,16)" rx="2" ry="2" />
+<text  x="756.66" y="159.5" >dg..</text>
+</g>
+<g >
+<title>nn.Module:_Linear_0 (2,240,611 us., 2.68%)</title><rect x="566.5" y="197" width="31.6" height="15.0" fill="rgb(236,22,34)" rx="2" ry="2" />
+<text  x="569.46" y="207.5" >nn..</text>
+</g>
+<g >
+<title>&lt;built-in_method_dropout_of_type_object_at_0x7fbb46864b00&gt; (1,547,847 us., 1.85%)</title><rect x="700.2" y="149" width="21.9" height="15.0" fill="rgb(229,83,49)" rx="2" ry="2" />
+<text  x="703.22" y="159.5" >&lt;..</text>
+</g>
+<g >
+<title>dgl/ops/spmm.py(213):_func (8,942,929 us., 10.70%)</title><rect x="440.2" y="149" width="126.2" height="15.0" fill="rgb(253,19,41)" rx="2" ry="2" />
+<text  x="443.15" y="159.5" >dgl/ops/spmm.py..</text>
+</g>
+<g >
+<title>dgl/backend/pytorch/tensor.py(274):_reshape (12,538 us., 0.02%)</title><rect x="563.1" y="117" width="0.2" height="15.0" fill="rgb(219,208,8)" rx="2" ry="2" />
+<text  x="566.08" y="127.5" ></text>
+</g>
+<g >
+<title>&lt;built-in_method_addcdiv__of_Parameter_object_at_0x7fbb12604a90&gt; (56,724 us., 0.07%)</title><rect x="887.4" y="181" width="0.8" height="15.0" fill="rgb(234,68,16)" rx="2" ry="2" />
+<text  x="890.42" y="191.5" ></text>
+</g>
+<g >
+<title>dgl/nn/pytorch/conv/sageconv.py(170):_forward (8,240,319 us., 9.86%)</title><rect x="636.6" y="213" width="116.4" height="15.0" fill="rgb(230,215,31)" rx="2" ry="2" />
+<text  x="639.62" y="223.5" >dgl/nn/pytorch..</text>
+</g>
+<g >
+<title>nn.Module:_Linear_3 (1,051,587 us., 1.26%)</title><rect x="738.1" y="197" width="14.9" height="15.0" fill="rgb(252,26,7)" rx="2" ry="2" />
+<text  x="741.13" y="207.5" ></text>
+</g>
+<g >
+<title>torch/nn/functional.py(2936):_cross_entropy (219,821 us., 0.26%)</title><rect x="871.0" y="261" width="3.1" height="15.0" fill="rgb(226,221,48)" rx="2" ry="2" />
+<text  x="873.99" y="271.5" ></text>
+</g>
+<g >
+<title>torch/utils/data/dataloader.py(1253):__get_data (142,370 us., 0.17%)</title><rect x="217.9" y="181" width="2.0" height="15.0" fill="rgb(244,122,28)" rx="2" ry="2" />
+<text  x="220.93" y="191.5" ></text>
+</g>
+<g >
+<title>&lt;built-in_method_clamp_of_type_object_at_0x7fbb46864b00&gt; (86,273 us., 0.10%)</title><rect x="563.3" y="101" width="1.2" height="15.0" fill="rgb(237,168,28)" rx="2" ry="2" />
+<text  x="566.26" y="111.5" ></text>
+</g>
+<g >
+<title>torch/_ops.py(437):___call__ (20,933,327 us., 25.05%)</title><rect x="894.4" y="261" width="295.6" height="15.0" fill="rgb(206,179,39)" rx="2" ry="2" />
+<text  x="897.40" y="271.5" >torch/_ops.py(437):___call__</text>
+</g>
+<g >
+<title>dgl/core.py(364):_message_passing (8,942,929 us., 10.70%)</title><rect x="440.2" y="181" width="126.2" height="15.0" fill="rgb(221,140,53)" rx="2" ry="2" />
+<text  x="443.15" y="191.5" >dgl/core.py(364..</text>
+</g>
+<g >
+<title>&lt;built-in_method_apply_of_FunctionMeta_object_at_0x4d0b2c0&gt; (3,321,392 us., 3.97%)</title><rect x="650.0" y="101" width="46.9" height="15.0" fill="rgb(227,31,4)" rx="2" ry="2" />
+<text  x="653.02" y="111.5" >&lt;bui..</text>
+</g>
+<g >
+<title>nn.Module:_Dropout_1 (4,085,185 us., 4.89%)</title><rect x="359.0" y="229" width="57.7" height="15.0" fill="rgb(225,194,13)" rx="2" ry="2" />
+<text  x="361.99" y="239.5" >nn.Mod..</text>
+</g>
+<g >
+<title>&lt;built-in_method_apply_of_FunctionMeta_object_at_0x4d0b2c0&gt; (7,966,168 us., 9.53%)</title><rect x="449.6" y="101" width="112.5" height="15.0" fill="rgb(205,204,38)" rx="2" ry="2" />
+<text  x="452.60" y="111.5" >&lt;built-in_met..</text>
+</g>
+<g >
+<title>&lt;built-in_method_arange_of_type_object_at_0x7fbb46864b00&gt; (21,143 us., 0.03%)</title><rect x="785.3" y="69" width="0.3" height="15.0" fill="rgb(249,207,51)" rx="2" ry="2" />
+<text  x="788.33" y="79.5" ></text>
+</g>
+<g >
+<title>dgl/backend/pytorch/tensor.py(367):_clamp (86,273 us., 0.10%)</title><rect x="563.3" y="117" width="1.2" height="15.0" fill="rgb(219,171,23)" rx="2" ry="2" />
+<text  x="566.26" y="127.5" ></text>
+</g>
+<g >
+<title>dgl/dataloading/dataloader.py(273):__prefetch_for_subgraph (9,845,700 us., 11.78%)</title><rect x="219.9" y="117" width="139.1" height="15.0" fill="rgb(209,149,38)" rx="2" ry="2" />
+<text  x="222.94" y="127.5" >dgl/dataloading/d..</text>
+</g>
+<g >
+<title>torch/optim/adam.py(168):_step (851,389 us., 1.02%)</title><rect x="880.9" y="229" width="12.0" height="15.0" fill="rgb(216,145,51)" rx="2" ry="2" />
+<text  x="883.92" y="239.5" ></text>
+</g>
+<g >
+<title>&lt;built-in_method_zeros_of_type_object_at_0x7fbb46864b00&gt; (10,031 us., 0.01%)</title><rect x="874.1" y="229" width="0.1" height="15.0" fill="rgb(221,196,3)" rx="2" ry="2" />
+<text  x="877.09" y="239.5" ></text>
+</g>
+<g >
+<title>dgl/backend/pytorch/sparse.py(163):_forward (563,880 us., 0.67%)</title><rect x="554.1" y="85" width="8.0" height="15.0" fill="rgb(212,113,23)" rx="2" ry="2" />
+<text  x="557.13" y="95.5" ></text>
+</g>
+<g >
+<title>torch/nn/modules/linear.py(113):_forward (1,136,747 us., 1.36%)</title><rect x="722.1" y="181" width="16.0" height="15.0" fill="rgb(242,62,40)" rx="2" ry="2" />
+<text  x="725.08" y="191.5" ></text>
+</g>
+<g >
+<title>dgl/heterograph_index.py(1525):_&lt;listcomp&gt; (14,371 us., 0.02%)</title><rect x="217.9" y="101" width="0.2" height="15.0" fill="rgb(225,184,17)" rx="2" ry="2" />
+<text  x="220.93" y="111.5" ></text>
+</g>
+<g >
+<title>dgl/backend/pytorch/sparse.py(1023):_gspmm (2,094,124 us., 2.51%)</title><rect x="754.7" y="117" width="29.6" height="15.0" fill="rgb(222,109,45)" rx="2" ry="2" />
+<text  x="757.71" y="127.5" >dg..</text>
+</g>
+<g >
+<title>&lt;built-in_method_set__of_Tensor_object_at_0x7fbb30f8b130&gt; (43,683 us., 0.05%)</title><rect x="218.1" y="85" width="0.7" height="15.0" fill="rgb(237,24,4)" rx="2" ry="2" />
+<text  x="221.13" y="95.5" ></text>
+</g>
+<g >
+<title>dgl/backend/pytorch/sparse.py(163):_forward (51,422 us., 0.06%)</title><rect x="783.6" y="85" width="0.7" height="15.0" fill="rgb(240,138,31)" rx="2" ry="2" />
+<text  x="786.55" y="95.5" ></text>
+</g>
+<g >
+<title>&lt;built-in_function_cross_entropy_loss&gt; (219,821 us., 0.26%)</title><rect x="871.0" y="245" width="3.1" height="15.0" fill="rgb(220,227,43)" rx="2" ry="2" />
+<text  x="873.99" y="255.5" ></text>
+</g>
+<g >
+<title>dgl/backend/pytorch/tensor.py(429):_zerocopy_to_dgl_ndarray (38,911 us., 0.05%)</title><rect x="784.8" y="69" width="0.5" height="15.0" fill="rgb(214,63,12)" rx="2" ry="2" />
+<text  x="787.78" y="79.5" ></text>
+</g>
+<g >
+<title>torch/autograd/profiler.py(487):___enter__ (14,719,777 us., 17.62%)</title><rect x="10.1" y="197" width="207.8" height="15.0" fill="rgb(223,30,2)" rx="2" ry="2" />
+<text  x="13.07" y="207.5" >torch/autograd/profiler.py(..</text>
+</g>
+<g >
+<title>torch/nn/modules/linear.py(113):_forward (2,727,665 us., 3.26%)</title><rect x="598.1" y="181" width="38.5" height="15.0" fill="rgb(235,118,51)" rx="2" ry="2" />
+<text  x="601.10" y="191.5" >tor..</text>
+</g>
+<g >
+<title>dgl/backend/pytorch/tensor.py(367):_clamp (12,817 us., 0.02%)</title><rect x="784.6" y="117" width="0.2" height="15.0" fill="rgb(208,100,5)" rx="2" ry="2" />
+<text  x="787.60" y="127.5" ></text>
+</g>
+<g >
+<title>&lt;built-in_method_relu_of_type_object_at_0x7fbb46864b00&gt; (1,393,651 us., 1.67%)</title><rect x="807.7" y="213" width="19.7" height="15.0" fill="rgb(233,44,44)" rx="2" ry="2" />
+<text  x="810.74" y="223.5" ></text>
+</g>
+<g >
+<title>dgl/heterograph_index.py(1523):__forking_rebuild (14,371 us., 0.02%)</title><rect x="217.9" y="117" width="0.2" height="15.0" fill="rgb(244,125,8)" rx="2" ry="2" />
+<text  x="220.93" y="127.5" ></text>
+</g>
+<g >
+<title>dgl/_sparse_ops.py(156):__gspmm (563,880 us., 0.67%)</title><rect x="554.1" y="69" width="8.0" height="15.0" fill="rgb(251,160,45)" rx="2" ry="2" />
+<text  x="557.13" y="79.5" ></text>
+</g>
+<g >
+<title>dgl/nn/pytorch/conv/sageconv.py(170):_forward (15,575,671 us., 18.64%)</title><rect x="416.7" y="213" width="219.9" height="15.0" fill="rgb(218,226,27)" rx="2" ry="2" />
+<text  x="419.68" y="223.5" >dgl/nn/pytorch/conv/sageconv...</text>
+</g>
+<g >
+<title>dgl/dataloading/dataloader.py(511):___next__ (24,712,746 us., 29.57%)</title><rect x="10.0" y="261" width="349.0" height="15.0" fill="rgb(238,142,2)" rx="2" ry="2" />
+<text  x="13.01" y="271.5" >dgl/dataloading/dataloader.py(511):___next__</text>
+</g>
+<g >
+<title>torch/utils/data/dataloader.py(1107):__try_get_data (142,370 us., 0.17%)</title><rect x="217.9" y="165" width="2.0" height="15.0" fill="rgb(211,156,8)" rx="2" ry="2" />
+<text  x="220.93" y="175.5" ></text>
+</g>
+<g >
+<title>torch/utils/data/dataloader.py(1286):__next_data (142,370 us., 0.17%)</title><rect x="217.9" y="197" width="2.0" height="15.0" fill="rgb(241,222,33)" rx="2" ry="2" />
+<text  x="220.93" y="207.5" ></text>
+</g>
+<g >
+<title>dgl/core.py(364):_message_passing (3,951,936 us., 4.73%)</title><rect x="644.4" y="181" width="55.8" height="15.0" fill="rgb(251,215,15)" rx="2" ry="2" />
+<text  x="647.42" y="191.5" >dgl/c..</text>
+</g>
+<g >
+<title>dgl/core.py(364):_message_passing (2,263,817 us., 2.71%)</title><rect x="753.7" y="181" width="31.9" height="15.0" fill="rgb(205,186,12)" rx="2" ry="2" />
+<text  x="756.66" y="191.5" >dg..</text>
+</g>
+<g >
+<title>&lt;built-in_function_next&gt; (14,867,046 us., 17.79%)</title><rect x="10.0" y="229" width="209.9" height="15.0" fill="rgb(227,111,19)" rx="2" ry="2" />
+<text  x="13.01" y="239.5" >&lt;built-in_function_next&gt;</text>
+</g>
+<g >
+<title>dgl/core.py(303):_invoke_gspmm (2,263,817 us., 2.71%)</title><rect x="753.7" y="165" width="31.9" height="15.0" fill="rgb(207,0,13)" rx="2" ry="2" />
+<text  x="756.66" y="175.5" >dg..</text>
+</g>
+<g >
+<title>torch/utils/data/dataloader.py(623):___next__ (14,867,046 us., 17.79%)</title><rect x="10.0" y="213" width="209.9" height="15.0" fill="rgb(227,94,1)" rx="2" ry="2" />
+<text  x="13.01" y="223.5" >torch/utils/data/dataloader..</text>
+</g>
+<g >
+<title>dgl/backend/pytorch/tensor.py(282):_zeros (352,695 us., 0.42%)</title><rect x="691.9" y="53" width="5.0" height="15.0" fill="rgb(213,215,3)" rx="2" ry="2" />
+<text  x="694.94" y="63.5" ></text>
+</g>
+<g >
+<title>dgl/heterograph.py(4685):_update_all (2,263,817 us., 2.71%)</title><rect x="753.7" y="197" width="31.9" height="15.0" fill="rgb(208,155,13)" rx="2" ry="2" />
+<text  x="756.66" y="207.5" >dg..</text>
+</g>
+<g >
+<title>products.py(29):_forward (33,172,416 us., 39.70%)</title><rect x="359.0" y="245" width="468.4" height="15.0" fill="rgb(232,110,0)" rx="2" ry="2" />
+<text  x="361.99" y="255.5" >products.py(29):_forward</text>
+</g>
+<g >
+<title>dgl/backend/pytorch/tensor.py(282):_zeros (558,025 us., 0.67%)</title><rect x="554.2" y="53" width="7.9" height="15.0" fill="rgb(215,221,47)" rx="2" ry="2" />
+<text  x="557.21" y="63.5" ></text>
+</g>
+<g >
+<title>nn.Module:_SAGE_0 (33,172,416 us., 39.70%)</title><rect x="359.0" y="261" width="468.4" height="15.0" fill="rgb(212,70,12)" rx="2" ry="2" />
+<text  x="361.99" y="271.5" >nn.Module:_SAGE_0</text>
+</g>
+<g >
+<title>dgl/dataloading/dataloader.py(248):__prefetch_update_feats (9,845,700 us., 11.78%)</title><rect x="219.9" y="101" width="139.1" height="15.0" fill="rgb(235,32,36)" rx="2" ry="2" />
+<text  x="222.94" y="111.5" >dgl/dataloading/d..</text>
+</g>
+<g >
+<title>torch/autograd/profiler.py(487):___enter__ (65,380 us., 0.08%)</title><rect x="893.5" y="245" width="0.9" height="15.0" fill="rgb(205,213,49)" rx="2" ry="2" />
+<text  x="896.48" y="255.5" ></text>
+</g>
+<g >
+<title>torch/optim/optimizer.py(135):_wrapper (1,334,724 us., 1.60%)</title><rect x="874.1" y="261" width="18.8" height="15.0" fill="rgb(245,187,0)" rx="2" ry="2" />
+<text  x="877.09" y="271.5" ></text>
+</g>
+<g >
+<title>&lt;built-in_method_run_backward_of_torch._C._EngineBase_object_at_0x7fbb3761e940&gt; (3,077,487 us., 3.68%)</title><rect x="827.5" y="245" width="43.5" height="15.0" fill="rgb(238,5,6)" rx="2" ry="2" />
+<text  x="830.53" y="255.5" >&lt;bui..</text>
+</g>
+<g >
+<title>&lt;built-in_method_zeros_of_type_object_at_0x7fbb46864b00&gt; (558,025 us., 0.67%)</title><rect x="554.2" y="37" width="7.9" height="15.0" fill="rgb(221,18,26)" rx="2" ry="2" />
+<text  x="557.21" y="47.5" ></text>
+</g>
+<g >
+<title>dgl/_sparse_ops.py(156):__gspmm (51,422 us., 0.06%)</title><rect x="783.6" y="69" width="0.7" height="15.0" fill="rgb(229,73,8)" rx="2" ry="2" />
+<text  x="786.55" y="79.5" ></text>
+</g>
+<g >
+<title>dgl/heterograph_index.py(651):_in_degrees (38,911 us., 0.05%)</title><rect x="784.8" y="101" width="0.5" height="15.0" fill="rgb(223,16,42)" rx="2" ry="2" />
+<text  x="787.78" y="111.5" ></text>
+</g>
+<g >
+<title>dgl/heterograph.py(3365):_in_degrees (138,621 us., 0.17%)</title><rect x="564.5" y="117" width="1.9" height="15.0" fill="rgb(232,132,49)" rx="2" ry="2" />
+<text  x="567.48" y="127.5" ></text>
+</g>
+<g >
+<title>dgl/heterograph.py(3365):_in_degrees (60,054 us., 0.07%)</title><rect x="784.8" y="117" width="0.8" height="15.0" fill="rgb(249,156,1)" rx="2" ry="2" />
+<text  x="787.78" y="127.5" ></text>
+</g>
+<g >
+<title>torch/optim/optimizer.py(19):__use_grad (851,389 us., 1.02%)</title><rect x="880.9" y="245" width="12.0" height="15.0" fill="rgb(217,162,46)" rx="2" ry="2" />
+<text  x="883.92" y="255.5" ></text>
+</g>
+<g >
+<title>&lt;built-in_method_clamp_of_type_object_at_0x7fbb46864b00&gt; (12,817 us., 0.02%)</title><rect x="784.6" y="101" width="0.2" height="15.0" fill="rgb(216,42,53)" rx="2" ry="2" />
+<text  x="787.60" y="111.5" ></text>
+</g>
+<g >
+<title>dgl/backend/__init__.py(141):_to_dgl_nd (144,918 us., 0.17%)</title><rect x="697.8" y="85" width="2.0" height="15.0" fill="rgb(246,110,24)" rx="2" ry="2" />
+<text  x="700.76" y="95.5" ></text>
+</g>
+<g >
+<title>torch/nn/functional.py(1235):_dropout (1,547,847 us., 1.85%)</title><rect x="700.2" y="165" width="21.9" height="15.0" fill="rgb(233,158,18)" rx="2" ry="2" />
+<text  x="703.22" y="175.5" >t..</text>
+</g>
+<g >
+<title>dgl/backend/pytorch/tensor.py(401):_arange (29,565 us., 0.04%)</title><rect x="699.8" y="85" width="0.4" height="15.0" fill="rgb(215,172,45)" rx="2" ry="2" />
+<text  x="702.80" y="95.5" ></text>
+</g>
+<g >
+<title>&lt;built-in_method__record_function_enter_of_PyCapsule_object_at_0x7fbb30c84ba0&gt; (14,719,777 us., 17.62%)</title><rect x="10.1" y="165" width="207.8" height="15.0" fill="rgb(243,50,38)" rx="2" ry="2" />
+<text  x="13.07" y="175.5" >&lt;built-in_method__record_fu..</text>
+</g>
+<g >
+<title>dgl/ops/spmm.py(213):_func (3,951,936 us., 4.73%)</title><rect x="644.4" y="149" width="55.8" height="15.0" fill="rgb(224,158,14)" rx="2" ry="2" />
+<text  x="647.42" y="159.5" >dgl/o..</text>
+</g>
+<g >
+<title>&lt;built-in_function__to_dlpack&gt; (22,611 us., 0.03%)</title><rect x="564.5" y="53" width="0.3" height="15.0" fill="rgb(227,156,36)" rx="2" ry="2" />
+<text  x="567.48" y="63.5" ></text>
+</g>
+<g >
+<title>dgl/utils/internal.py(1132):_&lt;listcomp&gt; (9,845,700 us., 11.78%)</title><rect x="219.9" y="165" width="139.1" height="15.0" fill="rgb(212,175,12)" rx="2" ry="2" />
+<text  x="222.94" y="175.5" >dgl/utils/interna..</text>
+</g>
+<g >
+<title>multiprocessing/queues.py(92):_get (142,370 us., 0.17%)</title><rect x="217.9" y="149" width="2.0" height="15.0" fill="rgb(208,76,12)" rx="2" ry="2" />
+<text  x="220.93" y="159.5" ></text>
+</g>
+<g >
+<title>&lt;built-in_method_addcmul__of_Tensor_object_at_0x7fb99e52c950&gt; (29,936 us., 0.04%)</title><rect x="888.2" y="181" width="0.4" height="15.0" fill="rgb(213,11,6)" rx="2" ry="2" />
+<text  x="891.22" y="191.5" ></text>
+</g>
+<g >
+<title>torch/nn/modules/dropout.py(58):_forward (306,619 us., 0.37%)</title><rect x="785.6" y="181" width="4.4" height="15.0" fill="rgb(241,194,47)" rx="2" ry="2" />
+<text  x="788.63" y="191.5" ></text>
+</g>
+<g >
+<title>&lt;built-in_method_reshape_of_type_object_at_0x7fbb46864b00&gt; (10,447 us., 0.01%)</title><rect x="697.3" y="101" width="0.2" height="15.0" fill="rgb(244,52,0)" rx="2" ry="2" />
+<text  x="700.31" y="111.5" ></text>
+</g>
+<g >
+<title>&lt;built-in_method_reshape_of_type_object_at_0x7fbb46864b00&gt; (8,663 us., 0.01%)</title><rect x="784.5" y="101" width="0.1" height="15.0" fill="rgb(243,95,24)" rx="2" ry="2" />
+<text  x="787.48" y="111.5" ></text>
+</g>
+<g >
+<title>&lt;built-in_method_sqrt_of_Tensor_object_at_0x7fb99e52c950&gt; (131,397 us., 0.16%)</title><rect x="891.1" y="181" width="1.8" height="15.0" fill="rgb(217,34,30)" rx="2" ry="2" />
+<text  x="894.08" y="191.5" ></text>
+</g>
+<g >
+<title>torch/_utils.py(144):__rebuild_tensor (127,999 us., 0.15%)</title><rect x="218.1" y="101" width="1.8" height="15.0" fill="rgb(228,114,10)" rx="2" ry="2" />
+<text  x="221.13" y="111.5" ></text>
+</g>
+<g >
+<title>all (83,563,851 us., 100%)</title><rect x="10.0" y="309" width="1180.0" height="15.0" fill="rgb(229,106,4)" rx="2" ry="2" />
+<text  x="13.00" y="319.5" ></text>
+</g>
+<g >
+<title>&lt;built-in_function_linear&gt; (2,727,665 us., 3.26%)</title><rect x="598.1" y="165" width="38.5" height="15.0" fill="rgb(234,132,27)" rx="2" ry="2" />
+<text  x="601.10" y="175.5" >&lt;bu..</text>
+</g>
+<g >
+<title>&lt;built-in_method_empty_of_type_object_at_0x7fbb46864b00&gt; (22,885 us., 0.03%)</title><rect x="219.9" y="37" width="0.4" height="15.0" fill="rgb(237,84,42)" rx="2" ry="2" />
+<text  x="222.94" y="47.5" ></text>
+</g>
+<g >
+<title>&lt;built-in_function_loads&gt; (142,370 us., 0.17%)</title><rect x="217.9" y="133" width="2.0" height="15.0" fill="rgb(242,156,13)" rx="2" ry="2" />
+<text  x="220.93" y="143.5" ></text>
+</g>
+<g >
+<title>dgl/dataloading/dataloader.py(317):__prefetch (9,845,700 us., 11.78%)</title><rect x="219.9" y="229" width="139.1" height="15.0" fill="rgb(206,11,17)" rx="2" ry="2" />
+<text  x="222.94" y="239.5" >dgl/dataloading/d..</text>
+</g>
+<g >
+<title>&lt;built-in_method_add_of_Tensor_object_at_0x7fb99e52cbd0&gt; (108,860 us., 0.13%)</title><rect x="885.9" y="181" width="1.5" height="15.0" fill="rgb(216,77,14)" rx="2" ry="2" />
+<text  x="888.88" y="191.5" ></text>
+</g>
+<g >
+<title>dgl/core.py(303):_invoke_gspmm (3,951,936 us., 4.73%)</title><rect x="644.4" y="165" width="55.8" height="15.0" fill="rgb(216,108,19)" rx="2" ry="2" />
+<text  x="647.42" y="175.5" >dgl/c..</text>
+</g>
+<g >
+<title>nn.Module:_Dropout_3 (306,619 us., 0.37%)</title><rect x="785.6" y="197" width="4.4" height="15.0" fill="rgb(225,160,43)" rx="2" ry="2" />
+<text  x="788.63" y="207.5" ></text>
+</g>
+<g >
+<title>nn.Module:_SAGEConv_0 (15,575,671 us., 18.64%)</title><rect x="416.7" y="229" width="219.9" height="15.0" fill="rgb(226,166,52)" rx="2" ry="2" />
+<text  x="419.68" y="239.5" >nn.Module:_SAGEConv_0</text>
+</g>
+<g >
+<title>dgl/_sparse_ops.py(156):__gspmm (359,645 us., 0.43%)</title><rect x="691.8" y="69" width="5.1" height="15.0" fill="rgb(234,94,15)" rx="2" ry="2" />
+<text  x="694.85" y="79.5" ></text>
+</g>
+<g >
+<title>dgl/heterograph.py(4685):_update_all (3,951,936 us., 4.73%)</title><rect x="644.4" y="197" width="55.8" height="15.0" fill="rgb(218,105,31)" rx="2" ry="2" />
+<text  x="647.42" y="207.5" >dgl/h..</text>
+</g>
+<g >
+<title>dgl/backend/__init__.py(141):_to_dgl_nd (22,611 us., 0.03%)</title><rect x="564.5" y="85" width="0.3" height="15.0" fill="rgb(244,130,20)" rx="2" ry="2" />
+<text  x="567.48" y="95.5" ></text>
+</g>
+<g >
+<title>dgl/utils/internal.py(1095):_recursive_apply (9,845,700 us., 11.78%)</title><rect x="219.9" y="181" width="139.1" height="15.0" fill="rgb(224,136,43)" rx="2" ry="2" />
+<text  x="222.94" y="191.5" >dgl/utils/interna..</text>
+</g>
+<g >
+<title>&lt;built-in_method_arange_of_type_object_at_0x7fbb46864b00&gt; (29,565 us., 0.04%)</title><rect x="699.8" y="69" width="0.4" height="15.0" fill="rgb(219,76,3)" rx="2" ry="2" />
+<text  x="702.80" y="79.5" ></text>
+</g>
+<g >
+<title>&lt;built-in_function_linear&gt; (1,136,747 us., 1.36%)</title><rect x="722.1" y="165" width="16.0" height="15.0" fill="rgb(224,222,26)" rx="2" ry="2" />
+<text  x="725.08" y="175.5" ></text>
+</g>
+<g >
+<title>&lt;built-in_method_arange_of_type_object_at_0x7fbb46864b00&gt; (116,010 us., 0.14%)</title><rect x="564.8" y="69" width="1.6" height="15.0" fill="rgb(254,151,42)" rx="2" ry="2" />
+<text  x="567.80" y="79.5" ></text>
+</g>
+<g >
+<title>dgl/backend/pytorch/sparse.py(1023):_gspmm (3,321,392 us., 3.97%)</title><rect x="650.0" y="117" width="46.9" height="15.0" fill="rgb(207,37,4)" rx="2" ry="2" />
+<text  x="653.02" y="127.5" >dgl/..</text>
+</g>
+<g >
+<title>dgl/backend/pytorch/tensor.py(429):_zerocopy_to_dgl_ndarray (22,611 us., 0.03%)</title><rect x="564.5" y="69" width="0.3" height="15.0" fill="rgb(215,103,1)" rx="2" ry="2" />
+<text  x="567.48" y="79.5" ></text>
+</g>
+<g >
+<title>dgl/dataloading/dataloader.py(284):__prefetch_for (9,845,700 us., 11.78%)</title><rect x="219.9" y="133" width="139.1" height="15.0" fill="rgb(239,180,29)" rx="2" ry="2" />
+<text  x="222.94" y="143.5" >dgl/dataloading/d..</text>
+</g>
+<g >
+<title>dgl/view.py(46):___call__ (116,010 us., 0.14%)</title><rect x="564.8" y="101" width="1.6" height="15.0" fill="rgb(238,26,1)" rx="2" ry="2" />
+<text  x="567.80" y="111.5" ></text>
+</g>
+<g >
+<title>&lt;built-in_method_zeros_of_type_object_at_0x7fbb46864b00&gt; (352,695 us., 0.42%)</title><rect x="691.9" y="37" width="5.0" height="15.0" fill="rgb(249,168,37)" rx="2" ry="2" />
+<text  x="694.94" y="47.5" ></text>
+</g>
+<g >
+<title>torch/nn/modules/linear.py(113):_forward (249,399 us., 0.30%)</title><rect x="804.2" y="181" width="3.5" height="15.0" fill="rgb(250,39,2)" rx="2" ry="2" />
+<text  x="807.21" y="191.5" ></text>
+</g>
+<g >
+<title>&lt;built-in_method_tensor_of_type_object_at_0x7fbb46864b00&gt; (84,316 us., 0.10%)</title><rect x="218.8" y="85" width="1.1" height="15.0" fill="rgb(249,76,35)" rx="2" ry="2" />
+<text  x="221.75" y="95.5" ></text>
+</g>
+<g >
+<title>torch/autograd/profiler.py(478):___init__ (10,031 us., 0.01%)</title><rect x="874.1" y="245" width="0.1" height="15.0" fill="rgb(251,166,23)" rx="2" ry="2" />
+<text  x="877.09" y="255.5" ></text>
+</g>
+<g >
+<title>dgl/core.py(303):_invoke_gspmm (8,942,929 us., 10.70%)</title><rect x="440.2" y="165" width="126.2" height="15.0" fill="rgb(223,218,12)" rx="2" ry="2" />
+<text  x="443.15" y="175.5" >dgl/core.py(303..</text>
+</g>
+<g >
+<title>&lt;built-in_function__to_dlpack&gt; (14,371 us., 0.02%)</title><rect x="217.9" y="53" width="0.2" height="15.0" fill="rgb(238,60,52)" rx="2" ry="2" />
+<text  x="220.93" y="63.5" ></text>
+</g>
+<g >
+<title>&lt;built-in_method_type_of_Tensor_object_at_0x7fb99e537360&gt; (27,294 us., 0.03%)</title><rect x="696.9" y="101" width="0.4" height="15.0" fill="rgb(209,150,1)" rx="2" ry="2" />
+<text  x="699.92" y="111.5" ></text>
+</g>
+<g >
+<title>torch/multiprocessing/reductions.py(98):_rebuild_tensor (127,999 us., 0.15%)</title><rect x="218.1" y="117" width="1.8" height="15.0" fill="rgb(232,40,10)" rx="2" ry="2" />
+<text  x="221.13" y="127.5" ></text>
+</g>
+<g >
+<title>dgl/backend/pytorch/tensor.py(367):_clamp (21,369 us., 0.03%)</title><rect x="697.5" y="117" width="0.3" height="15.0" fill="rgb(237,154,8)" rx="2" ry="2" />
+<text  x="700.46" y="127.5" ></text>
+</g>
+<g >
+<title>&lt;built-in_function__to_dlpack&gt; (144,918 us., 0.17%)</title><rect x="697.8" y="53" width="2.0" height="15.0" fill="rgb(228,158,40)" rx="2" ry="2" />
+<text  x="700.76" y="63.5" ></text>
+</g>
+<g >
+<title>&lt;built-in_method_ones_like_of_type_object_at_0x7fbb46864b00&gt; (8,167 us., 0.01%)</title><rect x="827.4" y="245" width="0.1" height="15.0" fill="rgb(242,51,14)" rx="2" ry="2" />
+<text  x="830.42" y="255.5" ></text>
+</g>
+<g >
+<title>torch/autograd/profiler.py(487):___enter__ (20,933,327 us., 25.05%)</title><rect x="894.4" y="277" width="295.6" height="15.0" fill="rgb(228,169,30)" rx="2" ry="2" />
+<text  x="897.40" y="287.5" >torch/autograd/profiler.py(487):___ente..</text>
+</g>
+<g >
+<title>dgl/backend/pytorch/sparse.py(163):_forward (359,645 us., 0.43%)</title><rect x="691.8" y="85" width="5.1" height="15.0" fill="rgb(245,20,9)" rx="2" ry="2" />
+<text  x="694.85" y="95.5" ></text>
+</g>
+<g >
+<title>dgl/utils/internal.py(1132):_&lt;listcomp&gt; (9,845,700 us., 11.78%)</title><rect x="219.9" y="197" width="139.1" height="15.0" fill="rgb(228,92,33)" rx="2" ry="2" />
+<text  x="222.94" y="207.5" >dgl/utils/interna..</text>
+</g>
+<g >
+<title>dgl/heterograph.py(3365):_in_degrees (174,483 us., 0.21%)</title><rect x="697.8" y="117" width="2.4" height="15.0" fill="rgb(221,78,25)" rx="2" ry="2" />
+<text  x="700.76" y="127.5" ></text>
+</g>
+<g >
+<title>nn.Module:_SAGEConv_1 (8,240,319 us., 9.86%)</title><rect x="636.6" y="229" width="116.4" height="15.0" fill="rgb(247,129,15)" rx="2" ry="2" />
+<text  x="639.62" y="239.5" >nn.Module:_SAG..</text>
+</g>
+<g >
+<title>&lt;built-in_method__record_function_enter_of_PyCapsule_object_at_0x7fbb30c84ba0&gt; (65,380 us., 0.08%)</title><rect x="893.5" y="213" width="0.9" height="15.0" fill="rgb(228,51,27)" rx="2" ry="2" />
+<text  x="896.48" y="223.5" ></text>
+</g>
+<g >
+<title>torch/nn/modules/dropout.py(58):_forward (4,085,185 us., 4.89%)</title><rect x="359.0" y="213" width="57.7" height="15.0" fill="rgb(247,137,43)" rx="2" ry="2" />
+<text  x="361.99" y="223.5" >torch/..</text>
+</g>
+<g >
+<title>torch/_tensor.py(429):_backward (3,085,654 us., 3.69%)</title><rect x="827.4" y="261" width="43.6" height="15.0" fill="rgb(221,152,44)" rx="2" ry="2" />
+<text  x="830.42" y="271.5" >torc..</text>
+</g>
+<g >
+<title>&lt;built-in_method_reshape_of_type_object_at_0x7fbb46864b00&gt; (12,538 us., 0.02%)</title><rect x="563.1" y="101" width="0.2" height="15.0" fill="rgb(216,219,16)" rx="2" ry="2" />
+<text  x="566.08" y="111.5" ></text>
+</g>
+<g >
+<title>torch/optim/adam.py(319):__single_tensor_adam (848,274 us., 1.02%)</title><rect x="881.0" y="197" width="11.9" height="15.0" fill="rgb(232,181,2)" rx="2" ry="2" />
+<text  x="883.96" y="207.5" ></text>
+</g>
+<g >
+<title>dgl/backend/pytorch/tensor.py(401):_arange (116,010 us., 0.14%)</title><rect x="564.8" y="85" width="1.6" height="15.0" fill="rgb(254,122,12)" rx="2" ry="2" />
+<text  x="567.80" y="95.5" ></text>
+</g>
+<g >
+<title>dgl/backend/__init__.py(141):_to_dgl_nd (38,911 us., 0.05%)</title><rect x="784.8" y="85" width="0.5" height="15.0" fill="rgb(239,32,50)" rx="2" ry="2" />
+<text  x="787.78" y="95.5" ></text>
+</g>
+<g >
+<title>dgl/utils/internal.py(1095):_recursive_apply (9,845,700 us., 11.78%)</title><rect x="219.9" y="149" width="139.1" height="15.0" fill="rgb(247,31,17)" rx="2" ry="2" />
+<text  x="222.94" y="159.5" >dgl/utils/interna..</text>
+</g>
+<g >
+<title>torch/autograd/profiler.py(487):___enter__ (473,304 us., 0.57%)</title><rect x="874.2" y="245" width="6.7" height="15.0" fill="rgb(239,206,2)" rx="2" ry="2" />
+<text  x="877.23" y="255.5" ></text>
+</g>
+<g >
+<title>dgl/backend/pytorch/tensor.py(401):_arange (21,143 us., 0.03%)</title><rect x="785.3" y="85" width="0.3" height="15.0" fill="rgb(253,181,33)" rx="2" ry="2" />
+<text  x="788.33" y="95.5" ></text>
+</g>
+</g>
+</svg>
