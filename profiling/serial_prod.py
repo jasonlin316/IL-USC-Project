@@ -163,7 +163,7 @@ if __name__ == '__main__':
         print(prof.key_averages().table(sort_by="self_cpu_time_total", row_limit=10),file=f)
     # fpath_2 = "/tmp/" + "prod_" + args.algo + "_stacks.txt"
     # prof.export_stacks(fpath_2, "self_cpu_time_total")
-    prof.export_chrome_trace("serial_trace.json")
+    # prof.export_chrome_trace("serial_trace.json")
     #print(prof.key_averages(group_by_stack_n=5).table(sort_by="self_cpu_time_total", row_limit=2))
     
 
