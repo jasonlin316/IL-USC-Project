@@ -36,9 +36,9 @@ class SAGE(nn.Module):
         super().__init__()
         self.layers = nn.ModuleList()
         # three-layer GraphSAGE-mean
-        self.layers.append(dglnn.GraphConv(in_size, hid_size))
-        self.layers.append(dglnn.GraphConv(hid_size, hid_size))
-        self.layers.append(dglnn.GraphConv(hid_size, hid_size))
+        self.layers.append(dglnn.GraphConv(in_size, hid_size,allow_zero_in_degree=True))
+        self.layers.append(dglnn.GraphConv(hid_size, hid_size,allow_zero_in_degree=True))
+        self.layers.append(dglnn.GraphConv(hid_size, hid_size,allow_zero_in_degree=True))
         self.hid_size = hid_size
         self.predictor = nn.Sequential(
             nn.Linear(hid_size, hid_size),
@@ -158,6 +158,7 @@ if __name__ == '__main__':
     print('Loading data')
     dataset = DglLinkPropPredDataset('ogbl-citation2')
     g = dataset[0]
+    
     g = g.to('cuda' if args.mode == 'puregpu' else 'cpu')
     device = torch.device('cpu' if args.mode == 'cpu' else 'cuda')
     g, reverse_eids = to_bidirected_with_reverse_mapping(g)

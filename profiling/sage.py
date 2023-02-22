@@ -17,8 +17,9 @@ class SAGE(nn.Module):
     def __init__(self, in_size, hid_size, out_size):
         super().__init__()
         self.layers = nn.ModuleList()
-        # two-layer GraphSAGE-mean
+        # three-layer GraphSAGE-mean
         self.layers.append(dglnn.SAGEConv(in_size, hid_size, "gcn"))
+        self.layers.append(dglnn.SAGEConv(hid_size, hid_size, "gcn"))
         self.layers.append(dglnn.SAGEConv(hid_size, out_size, "gcn"))
         self.dropout = nn.Dropout(0.5)
 
@@ -62,20 +63,20 @@ def train(g, features, labels, masks, model, dataset,args, train_id):
     # training loop
     for epoch in range(1):
         model.train()
-        total_loss = 0
-        with train_dataloader.enable_cpu_affinity():
-            for it, (input_nodes, output_nodes, blocks) in enumerate(train_dataloader):
-                x = blocks[0].srcdata['feat']
-                y = blocks[-1].dstdata['label']
-                y_hat = model(blocks, x)
-                loss = F.cross_entropy(y_hat, y)
-                optimizer.zero_grad()
-                loss.backward()
-                optimizer.step()
-                total_loss += loss.item()
-                print('loss:', total_loss)
-        print("Epoch: ", epoch )
-        '''
+        # total_loss = 0
+        # with train_dataloader.enable_cpu_affinity():
+        #     for it, (input_nodes, output_nodes, blocks) in enumerate(train_dataloader):
+        #         x = blocks[0].srcdata['feat']
+        #         y = blocks[-1].dstdata['label']
+        #         y_hat = model(blocks, x)
+        #         loss = F.cross_entropy(y_hat, y)
+        #         optimizer.zero_grad()
+        #         loss.backward()
+        #         optimizer.step()
+        #         total_loss += loss.item()
+        #         print('loss:', total_loss)
+        # print("Epoch: ", epoch )
+        
         logits = model(g, features)
         loss = loss_fcn(logits[train_mask], labels[train_mask])
         optimizer.zero_grad()
@@ -93,7 +94,7 @@ def train(g, features, labels, masks, model, dataset,args, train_id):
             multilabel = dataset in multilabel_data
             val_f1_mic, val_f1_mac = ev(model, g, labels, g.ndata["val_mask"], multilabel)
             print("Val F1-mic {:.4f}, Val F1-mac {:.4f}".format(val_f1_mic, val_f1_mac))
-        '''
+        
 
 if __name__ == "__main__":
     parser = argparse.ArgumentParser(description="GraphSAGE")
@@ -154,10 +155,11 @@ if __name__ == "__main__":
         with profile(activities=[ProfilerActivity.CPU], record_shapes=True) as prof:
             with record_function("train"):
                 train(g, features, labels, masks, model, args.dataset,args, train_id)
-        print(prof.key_averages().table(sort_by="cpu_time_total", row_limit=10))
+        print(prof.key_averages().table(sort_by="self_cpu_time_total", row_limit=10))
     else:
         train(g, features, labels, masks, model, args.dataset,args, train_id)
     
+    prof.export_chrome_trace("trace.json")
     # test the model
     '''
     if args.dataset == "cora" or args.dataset == "citeseer" or args.dataset == "pubmed":

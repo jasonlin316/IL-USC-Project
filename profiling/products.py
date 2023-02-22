@@ -20,7 +20,7 @@ class SAGE(nn.Module):
         self.layers = nn.ModuleList()
         # three-layer GraphSAGE-mean
         self.layers.append(dglnn.SAGEConv(in_size, hid_size, 'mean'))
-        self.layers.append(dglnn.SAGEConv(hid_size, hid_size, 'mean'))
+        # self.layers.append(dglnn.SAGEConv(hid_size, hid_size, 'mean'))
         self.layers.append(dglnn.SAGEConv(hid_size, out_size, 'mean'))
         self.dropout = nn.Dropout(0.5)
         self.hid_size = hid_size
@@ -90,11 +90,13 @@ def train(args, device, g, dataset, model):
     train_idx = dataset.train_idx.to(device)
     val_idx = dataset.val_idx.to(device)
     if args.algo == 'mini':
-        sampler = NeighborSampler([15, 10, 5],  # fanout for [layer-0, layer-1, layer-2]
-                                prefetch_node_feats=['feat'],
-                                prefetch_labels=['label'])
+        # sampler = NeighborSampler([25, 10],  # fanout for [layer-0, layer-1, layer-2]
+        #                         prefetch_node_feats=['feat'],
+        #                         prefetch_labels=['label'])
+        sampler = NeighborSampler([25, 10])  # fanout for [layer-0, layer-1, layer-2]
+                          
     else:
-        sampler = MultiLayerFullNeighborSampler(3)
+        sampler = MultiLayerFullNeighborSampler(2)
     use_uva = (args.mode == 'mixed')
     
     train_dataloader = DataLoader(g, train_idx, sampler, device=device,
@@ -109,7 +111,7 @@ def train(args, device, g, dataset, model):
 
     opt = torch.optim.Adam(model.parameters(), lr=1e-3, weight_decay=5e-4)
 
-    for epoch in range(5):
+    for epoch in range(1):
         model.train()
         total_loss = 0
         with train_dataloader.enable_cpu_affinity():
@@ -159,9 +161,9 @@ if __name__ == '__main__':
     fpath = "prod_" + args.algo + ".txt"
     with open(fpath, "a") as f:
         print(prof.key_averages().table(sort_by="self_cpu_time_total", row_limit=10),file=f)
-    fpath_2 = "/tmp/" + "prod_" + args.algo + "_stacks.txt"
-    prof.export_stacks(fpath_2, "self_cpu_time_total")
-    # prof.export_chrome_trace("trace.json")
+    # fpath_2 = "/tmp/" + "prod_" + args.algo + "_stacks.txt"
+    # prof.export_stacks(fpath_2, "self_cpu_time_total")
+    #prof.export_chrome_trace("no_prefetch_trace.json")
     #print(prof.key_averages(group_by_stack_n=5).table(sort_by="self_cpu_time_total", row_limit=2))
     
 
