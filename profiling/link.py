@@ -37,14 +37,14 @@ class SAGE(nn.Module):
         self.layers = nn.ModuleList()
         # three-layer GraphSAGE-mean
         self.layers.append(dglnn.SAGEConv(in_size, hid_size, 'mean'))
-        self.layers.append(dglnn.SAGEConv(hid_size, hid_size, 'mean'))
+        # self.layers.append(dglnn.SAGEConv(hid_size, hid_size, 'mean'))
         self.layers.append(dglnn.SAGEConv(hid_size, hid_size, 'mean'))
         self.hid_size = hid_size
         self.predictor = nn.Sequential(
             nn.Linear(hid_size, hid_size),
             nn.ReLU(),
-            nn.Linear(hid_size, hid_size),
-            nn.ReLU(),
+            # nn.Linear(hid_size, hid_size),
+            # nn.ReLU(),
             nn.Linear(hid_size, 1))
 
     def forward(self, pair_graph, neg_pair_graph, blocks, x):
@@ -111,9 +111,9 @@ def evaluate(device, graph, edge_split, model, batch_size):
 def train(args, device, g, reverse_eids, seed_edges, model):
     # create sampler & dataloader
     if args.algo == 'mini':
-        sampler = NeighborSampler([15, 10, 5], prefetch_node_feats=['feat'])
+        sampler = NeighborSampler([25, 10], prefetch_node_feats=['feat'])
     else:
-        sampler = MultiLayerFullNeighborSampler(3)
+        sampler = MultiLayerFullNeighborSampler(2)
     
     sampler = as_edge_prediction_sampler(
         sampler, exclude='reverse_id', reverse_eids=reverse_eids,
@@ -124,7 +124,7 @@ def train(args, device, g, reverse_eids, seed_edges, model):
         device=device, batch_size=1024, shuffle=True,
         drop_last=False, num_workers=4, use_uva=use_uva)
     opt = torch.optim.Adam(model.parameters(), lr=0.0005)
-    for epoch in range(2):
+    for epoch in range(1):
         model.train()
         total_loss = 0
         with dataloader.enable_cpu_affinity():
@@ -178,8 +178,9 @@ if __name__ == '__main__':
     fpath = "link_" + args.algo + ".txt"
     with open(fpath, "a") as f:
         print(prof.key_averages().table(sort_by="self_cpu_time_total", row_limit=10),file=f)
-    fpath_2 = "/tmp/" + "link_" + args.algo + "_stacks.txt"
-    prof.export_stacks(fpath_2, "self_cpu_time_total")
+    # fpath_2 = "/tmp/" + "link_" + args.algo + "_stacks.txt"
+    # prof.export_stacks(fpath_2, "self_cpu_time_total")
+    prof.export_chrome_trace("link_trace.json")
     # validate/test the model
     # print('Validation/Testing...')
     # valid_mrr, test_mrr = evaluate(device, g, edge_split, model, batch_size=1000)
