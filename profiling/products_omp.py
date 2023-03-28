@@ -13,8 +13,6 @@ from torchmetrics.classification import MulticlassAccuracy
 from torch.profiler import profile, record_function, ProfilerActivity
 
 
-comp_core = []
-load_core = []
 
 class SAGE(nn.Module):
     def __init__(self, in_size, hid_size, out_size):
@@ -68,13 +66,13 @@ def evaluate(model, graph, dataloader):
     model.eval()
     ys = []
     y_hats = []
-    with dataloader.enable_cpu_affinity(loader_cores = load_core, compute_cores =  comp_core):
-        for it, (input_nodes, output_nodes, blocks) in enumerate(dataloader):
-            with torch.no_grad():
-                x = blocks[0].srcdata['feat']
-                ys.append(blocks[-1].dstdata['label'])
-                y_hats.append(model(blocks, x))
-                accuracy = MulticlassAccuracy(num_classes=47)
+    #with dataloader.enable_cpu_affinity():
+    for it, (input_nodes, output_nodes, blocks) in enumerate(dataloader):
+        with torch.no_grad():
+            x = blocks[0].srcdata['feat']
+            ys.append(blocks[-1].dstdata['label'])
+            y_hats.append(model(blocks, x))
+            accuracy = MulticlassAccuracy(num_classes=47)
     return accuracy(torch.cat(y_hats), torch.cat(ys))
 
 def layerwise_infer(device, graph, nid, model, batch_size):
@@ -103,12 +101,12 @@ def train(args, device, g, dataset, model):
     
     train_dataloader = DataLoader(g, train_idx, sampler, device=device,
                                   batch_size=1024, shuffle=True,
-                                  drop_last=False, num_workers = 4,
+                                  drop_last=False, num_workers=0,
                                   use_uva=use_uva)
 
     val_dataloader = DataLoader(g, val_idx, sampler, device=device,
                                 batch_size=1024, shuffle=True,
-                                drop_last=False, num_workers = 4,
+                                drop_last=False, num_workers=0,
                                 use_uva=use_uva)
 
     opt = torch.optim.Adam(model.parameters(), lr=1e-3, weight_decay=5e-4)
@@ -116,17 +114,16 @@ def train(args, device, g, dataset, model):
     for epoch in range(1):
         model.train()
         total_loss = 0
-
-        with train_dataloader.enable_cpu_affinity(loader_cores = load_core, compute_cores =  comp_core):
-            for it, (input_nodes, output_nodes, blocks) in enumerate(train_dataloader):
-                x = blocks[0].srcdata['feat']
-                y = blocks[-1].dstdata['label']
-                y_hat = model(blocks, x)
-                loss = F.cross_entropy(y_hat, y)
-                opt.zero_grad()
-                loss.backward()
-                opt.step()
-                total_loss += loss.item()
+        # with train_dataloader.enable_cpu_affinity():
+        for it, (input_nodes, output_nodes, blocks) in enumerate(train_dataloader):
+            x = blocks[0].srcdata['feat']
+            y = blocks[-1].dstdata['label']
+            y_hat = model(blocks, x)
+            loss = F.cross_entropy(y_hat, y)
+            opt.zero_grad()
+            loss.backward()
+            opt.step()
+            total_loss += loss.item()
         # acc = evaluate(model, g, val_dataloader)
         print("Epoch ", epoch )
         # print("Epoch {:05d} | Loss {:.4f} | Accuracy {:.4f} "
@@ -138,16 +135,10 @@ if __name__ == '__main__':
                         help="Training mode. 'cpu' for CPU training, 'mixed' for CPU-GPU mixed training, "
                              "'puregpu' for pure-GPU training.")
     parser.add_argument("--algo", default='mini', choices=['mini', 'full'])
-    parser.add_argument("--core", default='half', choices=['half', 'full'])
     args = parser.parse_args()
     if not torch.cuda.is_available():
         args.mode = 'cpu'
     print(f'Training in {args.mode} mode.')
-    load_core = list(range(0,4))
-    if args.core == 'half':
-        comp_core = list(range(4,38))
-    else:
-        comp_core = list(range(4,76))
 
     # load and preprocess dataset
     print('Loading data')
@@ -167,10 +158,9 @@ if __name__ == '__main__':
         with record_function("train"):
             train(args, device, g, dataset, model)
     
-    print(prof.key_averages().table(sort_by="self_cpu_time_total", row_limit=10))
-    # fpath = "prod_" + args.algo + ".txt"
-    # with open(fpath, "a") as f:
-    #     print(prof.key_averages().table(sort_by="self_cpu_time_total", row_limit=10),file=f)
+    fpath = "prod_omp_" + args.algo + ".txt"
+    with open(fpath, "a") as f:
+        print(prof.key_averages().table(sort_by="self_cpu_time_total", row_limit=10),file=f)
     # fpath_2 = "/tmp/" + "prod_" + args.algo + "_stacks.txt"
     # prof.export_stacks(fpath_2, "self_cpu_time_total")
     # prof.export_chrome_trace("product_trace.json")
