@@ -138,9 +138,9 @@ if __name__ == '__main__':
     load_core = list(range(0,4)) # number of mini-batch sampler 
     
     if args.core == 'half':
-        comp_core = list(range(4,38))
+        comp_core = list(range(4,64))
     else:
-        comp_core = list(range(4,76))
+        comp_core = list(range(4,128))
 
     # load and preprocess dataset
     print('Loading data')
