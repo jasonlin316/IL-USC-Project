@@ -120,7 +120,7 @@ def train(args, device, g, dataset, model):
         batch_size=1024,
         shuffle=True,
         drop_last=False,
-        num_workers=4,
+        num_workers=8,
         use_uva=use_uva,
     )
 
@@ -132,7 +132,7 @@ def train(args, device, g, dataset, model):
         batch_size=1024,
         shuffle=True,
         drop_last=False,
-        num_workers=4,
+        num_workers=8,
         use_uva=use_uva,
     )
 
@@ -174,8 +174,8 @@ if __name__ == "__main__":
     if not torch.cuda.is_available():
         args.mode = "cpu"
     print(f"Training in {args.mode} mode.")
-    load_core = list(range(0,4))
-    comp_core = list(range(4,64))
+    load_core = list(range(0,4)) + list(range(38,42))
+    comp_core = list(range(4,38)) + list(range(42,76))
     # load and preprocess dataset
     print("Loading data")
     dataset = AsNodePredDataset(DglNodePropPredDataset("ogbn-products"))
