@@ -175,7 +175,7 @@ if __name__ == "__main__":
         args.mode = "cpu"
     print(f"Training in {args.mode} mode.")
     load_core = list(range(0,4))
-    comp_core = list(range(4,38))
+    comp_core = list(range(4,76))
     # load and preprocess dataset
     print("Loading data")
     dataset = AsNodePredDataset(DglNodePropPredDataset("ogbn-products"))
