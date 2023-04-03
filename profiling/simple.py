@@ -3,9 +3,11 @@ import argparse
 import dgl
 import dgl.nn as dglnn
 import torch
+import intel_extension_for_pytorch as ipex
 import torch.nn as nn
 import torch.nn.functional as F
 import torchmetrics.functional as MF
+
 import tqdm
 from dgl.data import AsNodePredDataset
 from dgl.dataloading import (
@@ -16,6 +18,7 @@ from dgl.dataloading import (
 from ogb.nodeproppred import DglNodePropPredDataset
 from torch.profiler import profile, record_function, ProfilerActivity
 from torchmetrics.classification import MulticlassAccuracy
+
 comp_core = []
 load_core = []
 
@@ -137,14 +140,13 @@ def train(args, device, g, dataset, model):
     )
 
     opt = torch.optim.Adam(model.parameters(), lr=1e-3, weight_decay=5e-4)
-
+    
     for epoch in range(1):
         model.train()
         total_loss = 0
+        model, opt= ipex.optimize(model, optimizer=opt)
         with train_dataloader.enable_cpu_affinity(loader_cores = load_core, compute_cores =  comp_core):
-            for it, (input_nodes, output_nodes, blocks) in enumerate(
-                train_dataloader
-            ):
+            for it, (input_nodes, output_nodes, blocks) in enumerate(train_dataloader):
                 x = blocks[0].srcdata["feat"]
                 y = blocks[-1].dstdata["label"]
                 y_hat = model(blocks, x)
@@ -174,8 +176,8 @@ if __name__ == "__main__":
     if not torch.cuda.is_available():
         args.mode = "cpu"
     print(f"Training in {args.mode} mode.")
-    load_core = list(range(0,4))
-    comp_core = list(range(4,76))
+    load_core = list(range(0,4)) + list(range(38,42))
+    comp_core = list(range(4,38)) + list(range(42,76))
     # load and preprocess dataset
     print("Loading data")
     dataset = AsNodePredDataset(DglNodePropPredDataset("ogbn-products"))

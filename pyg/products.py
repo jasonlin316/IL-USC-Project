@@ -9,6 +9,7 @@ from tqdm import tqdm
 
 from torch_geometric.loader import NeighborSampler
 from torch_geometric.nn import SAGEConv
+from torch.profiler import profile, record_function, ProfilerActivity
 
 root = osp.join(osp.dirname(osp.realpath(__file__)), '..', 'data', 'products')
 dataset = PygNodePropPredDataset('ogbn-products', root)
@@ -19,10 +20,10 @@ data = dataset[0]
 train_idx = split_idx['train']
 train_loader = NeighborSampler(data.edge_index, node_idx=train_idx,
                                sizes=[15, 10, 5], batch_size=1024,
-                               shuffle=True, num_workers=12)
+                               shuffle=True, num_workers=8,filter_per_worker=True)
 subgraph_loader = NeighborSampler(data.edge_index, node_idx=None, sizes=[-1],
                                   batch_size=4096, shuffle=False,
-                                  num_workers=12)
+                                  num_workers=8,filter_per_worker=True)
 
 
 class SAGE(torch.nn.Module):
@@ -86,7 +87,7 @@ class SAGE(torch.nn.Module):
 
 
 device = torch.device('cuda' if torch.cuda.is_available() else 'cpu')
-model = SAGE(dataset.num_features, 256, dataset.num_classes, num_layers=3)
+model = SAGE(dataset.num_features, 128, dataset.num_classes, num_layers=3)
 model = model.to(device)
 
 x = data.x.to(device)
@@ -158,19 +159,12 @@ for run in range(1, 2):
 
     best_val_acc = final_test_acc = 0
     for epoch in range(1, 2):
-        loss, acc = train(epoch)
-        print(f'Epoch {epoch:02d}, Loss: {loss:.4f}, Approx. Train: {acc:.4f}')
+        with profile(activities=[ProfilerActivity.CPU], record_shapes=True,with_stack=True) as prof:
+            with record_function("train"):
+                loss, acc = train(epoch)
+            print(f'Epoch {epoch:02d}, Loss: {loss:.4f}, Approx. Train: {acc:.4f}')
+    
+    print(prof.key_averages().table(sort_by="self_cpu_time_total", row_limit=10))
 
-        if epoch > 5:
-            train_acc, val_acc, test_acc = test()
-            print(f'Train: {train_acc:.4f}, Val: {val_acc:.4f}, '
-                  f'Test: {test_acc:.4f}')
-
-            if val_acc > best_val_acc:
-                best_val_acc = val_acc
-                final_test_acc = test_acc
-    test_accs.append(final_test_acc)
-
-test_acc = torch.tensor(test_accs)
-print('============================')
-print(f'Final Test: {test_acc.mean():.4f} ± {test_acc.std():.4f}')
+# print('============================')
+# print(f'Final Test: {test_acc.mean():.4f} ± {test_acc.std():.4f}')
