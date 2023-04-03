@@ -120,7 +120,7 @@ def train(args, device, g, dataset, model):
         batch_size=1024,
         shuffle=True,
         drop_last=False,
-        num_workers=8,
+        num_workers=4,
         use_uva=use_uva,
     )
 
@@ -132,7 +132,7 @@ def train(args, device, g, dataset, model):
         batch_size=1024,
         shuffle=True,
         drop_last=False,
-        num_workers=8,
+        num_workers=4,
         use_uva=use_uva,
     )
 
