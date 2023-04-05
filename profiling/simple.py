@@ -3,7 +3,7 @@ import argparse
 import dgl
 import dgl.nn as dglnn
 import torch
-import intel_extension_for_pytorch as ipex
+# import intel_extension_for_pytorch as ipex
 import torch.nn as nn
 import torch.nn.functional as F
 import torchmetrics.functional as MF
@@ -144,7 +144,7 @@ def train(args, device, g, dataset, model):
     for epoch in range(1):
         model.train()
         total_loss = 0
-        model, opt= ipex.optimize(model, optimizer=opt)
+        # model, opt= ipex.optimize(model, optimizer=opt)
         with train_dataloader.enable_cpu_affinity(loader_cores = load_core, compute_cores =  comp_core):
             for it, (input_nodes, output_nodes, blocks) in enumerate(train_dataloader):
                 x = blocks[0].srcdata["feat"]
@@ -176,8 +176,8 @@ if __name__ == "__main__":
     if not torch.cuda.is_available():
         args.mode = "cpu"
     print(f"Training in {args.mode} mode.")
-    load_core = list(range(0,4)) + list(range(38,42))
-    comp_core = list(range(4,38)) + list(range(42,76))
+    load_core = list(range(0,4))
+    comp_core = list(range(4,38))
     # load and preprocess dataset
     print("Loading data")
     dataset = AsNodePredDataset(DglNodePropPredDataset("ogbn-products"))
@@ -197,6 +197,6 @@ if __name__ == "__main__":
             train(args, device, g, dataset, model)
     print(prof.key_averages().table(sort_by="self_cpu_time_total", row_limit=10))
 
-    prof.export_chrome_trace("amd_one_socket.json")
+    # prof.export_chrome_trace("amd_one_socket.json")
     # acc = layerwise_infer(device, g, dataset.test_idx, model, batch_size=4096)
     # print("Test Accuracy {:.4f}".format(acc.item()))
