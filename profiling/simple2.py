@@ -18,7 +18,6 @@ from dgl.dataloading import (
 from ogb.nodeproppred import DglNodePropPredDataset
 from torch.profiler import profile, record_function, ProfilerActivity
 from torchmetrics.classification import MulticlassAccuracy
-import time
 
 comp_core = []
 load_core = []
@@ -142,8 +141,7 @@ def train(args, device, g, dataset, model):
 
     opt = torch.optim.Adam(model.parameters(), lr=1e-3, weight_decay=5e-4)
     
-    for epoch in range(4):
-        start = time.time()
+    for epoch in range(1):
         model.train()
         total_loss = 0
         # model, opt= ipex.optimize(model, optimizer=opt)
@@ -163,8 +161,6 @@ def train(args, device, g, dataset, model):
                 epoch, total_loss / (it + 1), acc.item()
             )
         )
-        end = time.time()
-        print(end - start, "sec")
 
 
 if __name__ == "__main__":
@@ -180,8 +176,8 @@ if __name__ == "__main__":
     if not torch.cuda.is_available():
         args.mode = "cpu"
     print(f"Training in {args.mode} mode.")
-    load_core = list(range(0,4))
-    comp_core = list(range(4,76))
+    load_core = list(range(38,42))
+    comp_core = list(range(42,76))
     # load and preprocess dataset
     print("Loading data")
     dataset = AsNodePredDataset(DglNodePropPredDataset("ogbn-products"))
@@ -196,10 +192,10 @@ if __name__ == "__main__":
 
     # model training
     print("Training...")
-    # with profile(activities=[ProfilerActivity.CPU], record_shapes=True,with_stack=True) as prof:
-    #     with record_function("train"):
-    train(args, device, g, dataset, model)
-    # print(prof.key_averages().table(sort_by="self_cpu_time_total", row_limit=10))
+    with profile(activities=[ProfilerActivity.CPU], record_shapes=True,with_stack=True) as prof:
+        with record_function("train"):
+            train(args, device, g, dataset, model)
+    print(prof.key_averages().table(sort_by="self_cpu_time_total", row_limit=10))
 
     # prof.export_chrome_trace("amd_one_socket.json")
     # acc = layerwise_infer(device, g, dataset.test_idx, model, batch_size=4096)
