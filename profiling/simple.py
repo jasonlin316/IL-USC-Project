@@ -20,6 +20,12 @@ from torch.profiler import profile, record_function, ProfilerActivity
 from torchmetrics.classification import MulticlassAccuracy
 import time
 
+import torch.distributed as dist
+import torch.multiprocessing as mp
+import dgl.multiprocessing as dmp
+from torch.nn.parallel import DistributedDataParallel
+import psutil
+
 comp_core = []
 load_core = []
 
@@ -56,7 +62,7 @@ class SAGE(nn.Module):
             batch_size=batch_size,
             shuffle=False,
             drop_last=False,
-            num_workers=0,
+            num_workers=3
         )
         buffer_device = torch.device("cpu")
         pin_memory = buffer_device != device
@@ -81,7 +87,7 @@ class SAGE(nn.Module):
         return y
 
 
-def evaluate(model, graph, dataloader):
+def evaluate(model, graph, dataloader, load_core, comp_core):
     model.eval()
     ys = []
     y_hats = []
@@ -106,8 +112,18 @@ def layerwise_infer(device, graph, nid, model, batch_size):
         return MF.accuracy(pred, label)
 
 
-def train(args, device, g, dataset, model):
+def train(rank, size, args, device, g, dataset, model):
     # create sampler & dataloader
+    dist.init_process_group('gloo', rank=rank, world_size=size)
+    model = DistributedDataParallel(model)
+    
+    if rank == 0:
+        load_core = list(range(0,4))
+        comp_core = list(range(4,38))
+    else:
+        load_core = list(range(38,42))
+        comp_core = list(range(42,74))
+
     train_idx = dataset.train_idx.to(device)
     val_idx = dataset.val_idx.to(device)
     sampler = NeighborSampler(
@@ -115,7 +131,7 @@ def train(args, device, g, dataset, model):
         prefetch_node_feats=["feat"],
         prefetch_labels=["label"],
     )
-    use_uva = args.mode == "mixed"
+    
     train_dataloader = DataLoader(
         g,
         train_idx,
@@ -124,8 +140,7 @@ def train(args, device, g, dataset, model):
         batch_size=1024,
         shuffle=True,
         drop_last=False,
-        num_workers=4,
-        use_uva=use_uva,
+        num_workers=4
     )
 
     val_dataloader = DataLoader(
@@ -136,13 +151,12 @@ def train(args, device, g, dataset, model):
         batch_size=1024,
         shuffle=True,
         drop_last=False,
-        num_workers=4,
-        use_uva=use_uva,
+        num_workers=4
     )
 
     opt = torch.optim.Adam(model.parameters(), lr=1e-3, weight_decay=5e-4)
     
-    for epoch in range(4):
+    for epoch in range(6):
         start = time.time()
         model.train()
         total_loss = 0
@@ -157,7 +171,8 @@ def train(args, device, g, dataset, model):
                 loss.backward()
                 opt.step()
                 total_loss += loss.item()
-        acc = evaluate(model, g, val_dataloader)
+            
+        acc = evaluate(model, g, val_dataloader, load_core, comp_core)
         print(
             "Epoch {:05d} | Loss {:.4f} | Accuracy {:.4f} ".format(
                 epoch, total_loss / (it + 1), acc.item()
@@ -180,8 +195,8 @@ if __name__ == "__main__":
     if not torch.cuda.is_available():
         args.mode = "cpu"
     print(f"Training in {args.mode} mode.")
-    load_core = list(range(0,4))
-    comp_core = list(range(4,76))
+
+    
     # load and preprocess dataset
     print("Loading data")
     dataset = AsNodePredDataset(DglNodePropPredDataset("ogbn-products"))
@@ -195,10 +210,28 @@ if __name__ == "__main__":
     model = SAGE(in_size, 128, out_size).to(device)
 
     # model training
-    print("Training...")
-    # with profile(activities=[ProfilerActivity.CPU], record_shapes=True,with_stack=True) as prof:
-    #     with record_function("train"):
-    train(args, device, g, dataset, model)
+    # mp.set_start_method('spawn')
+    size = 1
+    num_cores = psutil.cpu_count(logical=False) // size
+    master_addr = '127.0.0.1'
+    master_port = '29500'
+    
+    start = time.time()
+    processes = []
+    
+    for rank in range(size):
+        p = dmp.Process(target=train, args=(rank, size, args, device, g, dataset, model))
+        p.start()
+        processes.append(p)
+
+    # Wait for the processes to finish
+    for p in processes:
+        p.join()
+    end = time.time()
+    print(end - start, "sec")
+
+
+
     # print(prof.key_averages().table(sort_by="self_cpu_time_total", row_limit=10))
 
     # prof.export_chrome_trace("amd_one_socket.json")

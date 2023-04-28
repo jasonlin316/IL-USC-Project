@@ -46,10 +46,17 @@ def evaluate(g, features, labels, mask, model):
         return correct.item() * 1.0 / len(labels)
 
 
-def train(rank, size, g, features, labels, masks, model):
+def train(rank, size, g, features, labels, masks, model, bind):
     dist.init_process_group('gloo', rank=rank, world_size=size)
     
     model = DistributedDataParallel(model)
+    p = psutil.Process()
+    # core binding
+    if bind == True:
+        num_cores = 38
+        cores = list(range(rank*num_cores, (rank+1)*num_cores))
+        p.cpu_affinity(cores)
+        # os.sched_setaffinity(0, cores)
 
     # define train/val samples, loss function and optimizer
     train_mask = masks[0]
@@ -58,7 +65,7 @@ def train(rank, size, g, features, labels, masks, model):
     optimizer = torch.optim.Adam(model.parameters(), lr=1e-2, weight_decay=5e-4)
 
     # training loop
-    for epoch in range(30):
+    for epoch in range(15):
         model.train()
         logits = model(g, features)
         loss = loss_fcn(logits[train_mask], labels[train_mask])
@@ -81,8 +88,13 @@ if __name__ == "__main__":
         default="cora",
         help="Dataset name ('cora', 'citeseer', 'pubmed').",
     )
+    parser.add_argument(
+        "--binding",
+        type=str,
+        default='False'
+    )
     args = parser.parse_args()
-    print(f"Training with DGL built-in GraphConv module.")
+   
 
     # load and preprocess dataset
     transform = (
@@ -96,6 +108,11 @@ if __name__ == "__main__":
         data = PubmedGraphDataset(transform=transform)
     else:
         raise ValueError("Unknown dataset: {}".format(args.dataset))
+    
+    bind = False
+    if args.binding == "True":
+        bind = True
+
     g = data[0]
     device = torch.device("cpu")
     g = g.int().to(device)
@@ -116,9 +133,10 @@ if __name__ == "__main__":
     
     start = time.time()
     processes = []
+    
     for rank in range(size):
         
-        p = mp.Process(target=train, args=(rank, size, g, features, labels, masks, model))
+        p = mp.Process(target=train, args=(rank, size, g, features, labels, masks, model,bind))
         p.start()
         processes.append(p)
 
