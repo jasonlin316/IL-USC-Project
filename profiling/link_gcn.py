@@ -10,6 +10,16 @@ import argparse
 from ogb.linkproppred import DglLinkPropPredDataset, Evaluator
 from torch.profiler import profile, record_function, ProfilerActivity
 
+import torch.distributed as dist
+import torch.multiprocessing as mp
+import dgl.multiprocessing as dmp
+from torch.nn.parallel import DistributedDataParallel
+import time 
+
+comp_core = []
+load_core = []
+
+
 def to_bidirected_with_reverse_mapping(g):
     """Makes a graph bidirectional, and returns a mapping array ``mapping`` where ``mapping[i]``
     is the reverse edge of edge ID ``i``. Does not work with graphs that have self-loops.
@@ -36,9 +46,12 @@ class SAGE(nn.Module):
         super().__init__()
         self.layers = nn.ModuleList()
         # three-layer GraphSAGE-mean
-        self.layers.append(dglnn.GraphConv(in_size, hid_size,allow_zero_in_degree=True))
+        # self.layers.append(dglnn.GraphConv(in_size, hid_size,allow_zero_in_degree=True))
         # self.layers.append(dglnn.GraphConv(hid_size, hid_size,allow_zero_in_degree=True))
-        self.layers.append(dglnn.GraphConv(hid_size, hid_size,allow_zero_in_degree=True))
+        # self.layers.append(dglnn.GraphConv(hid_size, hid_size,allow_zero_in_degree=True))
+        self.layers.append(dglnn.SAGEConv(in_size, hid_size, "mean"))
+        # self.layers.append(dglnn.SAGEConv(hid_size, hid_size, "mean"))
+        self.layers.append(dglnn.SAGEConv(hid_size, hid_size, "mean"))
         self.hid_size = hid_size
         self.predictor = nn.Sequential(
             nn.Linear(hid_size, hid_size),
@@ -108,26 +121,53 @@ def evaluate(device, graph, edge_split, model, batch_size):
             results.append(compute_mrr(model, evaluator, node_emb, src, dst, neg_dst, device))
     return results
 
-def train(args, device, g, reverse_eids, seed_edges, model):
+def train(rank, size, args, device, g, reverse_eids, seed_edges, model):
     # create sampler & dataloader
+
+    dist.init_process_group('gloo', rank=rank, world_size=size)
+    model = DistributedDataParallel(model)
+    
+    if rank == 0:
+        load_core = list(range(0,4))
+        comp_core = list(range(4,38))
+    else:
+        load_core = list(range(38,42))
+        comp_core = list(range(42,78))
+    # if rank == 0:
+    #     load_core = list(range(0,4))
+    #     comp_core = list(range(4,19))
+    # elif rank == 1:
+    #     load_core = list(range(19,23))
+    #     comp_core = list(range(23,38))
+    # elif rank == 2:
+    #     load_core = list(range(38,42))
+    #     comp_core = list(range(42,57))
+    # else:
+    #     load_core = list(range(57,61))
+    #     comp_core = list(range(61,76))
+
     if args.algo == 'mini':
         sampler = NeighborSampler([25, 10], prefetch_node_feats=['feat'])
     else:
-        sampler = MultiLayerFullNeighborSampler(2)
+        sampler = MultiLayerFullNeighborSampler(3)
     
     sampler = as_edge_prediction_sampler(
         sampler, exclude='reverse_id', reverse_eids=reverse_eids,
         negative_sampler=negative_sampler.Uniform(1))
     use_uva = (args.mode == 'mixed')
+
     dataloader = DataLoader(
         g, seed_edges, sampler,
-        device=device, batch_size=1024, shuffle=True,
+        device=device, batch_size=2048, shuffle=True, use_ddp = True,
         drop_last=False, num_workers=4, use_uva=use_uva)
+    
     opt = torch.optim.Adam(model.parameters(), lr=0.0005)
-    for epoch in range(1):
+    
+    for epoch in range(3):
+        start = time.time()
         model.train()
         total_loss = 0
-        with dataloader.enable_cpu_affinity():
+        with dataloader.enable_cpu_affinity(loader_cores = load_core, compute_cores =  comp_core):
             for it, (input_nodes, pair_graph, neg_pair_graph, blocks) in enumerate(dataloader):
                 x = blocks[0].srcdata['feat']
                 pos_score, neg_score = model(pair_graph, neg_pair_graph, blocks, x)
@@ -141,7 +181,9 @@ def train(args, device, g, reverse_eids, seed_edges, model):
                 opt.step()
                 total_loss += loss.item()
                 if (it+1) == 1000: break
-        print("Epoch {:05d} | Loss {:.4f}".format(epoch, total_loss / (it+1)))
+        end = time.time()
+        print(end - start, "sec")
+        # print("Epoch {:05d} | Loss {:.4f}".format(epoch, total_loss / (it+1)))
 
 if __name__ == '__main__':
     parser = argparse.ArgumentParser()
@@ -170,18 +212,34 @@ if __name__ == '__main__':
     in_size = g.ndata['feat'].shape[1]
     model = SAGE(in_size, 128).to(device)
 
+    size = 1
+    master_addr = '127.0.0.1'
+    master_port = '29500'
+    processes = []
+
+    mp.set_start_method('fork')
+    start = time.time()
+    for rank in range(size):
+        p = dmp.Process(target=train, args=(rank, size, args, device, g, reverse_eids, seed_edges, model))
+        p.start()
+        processes.append(p)
+    for p in processes:
+        p.join()
+    end = time.time()
+    print(end - start, "sec")
+
     # model training
-    print('Training...')
-    with profile(activities=[ProfilerActivity.CPU], record_shapes=True,with_stack=True) as prof:
-        with record_function("train"):
-            train(args, device, g, reverse_eids, seed_edges, model)
+    # print('Training...')
+    # with profile(activities=[ProfilerActivity.CPU], record_shapes=True,with_stack=True) as prof:
+    #     with record_function("train"):
+    #         train(args, device, g, reverse_eids, seed_edges, model)
     
-    fpath = "link_" + args.algo + ".txt"
-    with open(fpath, "a") as f:
-        print(prof.key_averages().table(sort_by="self_cpu_time_total", row_limit=10),file=f)
-    fpath_2 = "/tmp/" + "link_" + args.algo + "_stacks.txt"
-    prof.export_stacks(fpath_2, "self_cpu_time_total")
-    prof.export_chrome_trace("link_gcn_trace.json")
+    # fpath = "link_" + args.algo + ".txt"
+    # with open(fpath, "a") as f:
+    #     print(prof.key_averages().table(sort_by="self_cpu_time_total", row_limit=10),file=f)
+    # fpath_2 = "/tmp/" + "link_" + args.algo + "_stacks.txt"
+    # prof.export_stacks(fpath_2, "self_cpu_time_total")
+    # prof.export_chrome_trace("link_gcn_trace.json")
     # validate/test the model
     # print('Validation/Testing...')
     # valid_mrr, test_mrr = evaluate(device, g, edge_split, model, batch_size=1000)

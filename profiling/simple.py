@@ -25,6 +25,8 @@ import torch.multiprocessing as mp
 import dgl.multiprocessing as dmp
 from torch.nn.parallel import DistributedDataParallel
 import psutil
+from viztracer import VizTracer
+
 
 comp_core = []
 load_core = []
@@ -35,7 +37,7 @@ class SAGE(nn.Module):
         self.layers = nn.ModuleList()
         # three-layer GraphSAGE-mean
         self.layers.append(dglnn.SAGEConv(in_size, hid_size, "mean"))
-        self.layers.append(dglnn.SAGEConv(hid_size, hid_size, "mean"))
+        # self.layers.append(dglnn.SAGEConv(hid_size, hid_size, "mean"))
         self.layers.append(dglnn.SAGEConv(hid_size, out_size, "mean"))
         self.dropout = nn.Dropout(0.5)
         self.hid_size = hid_size
@@ -118,16 +120,28 @@ def train(rank, size, args, device, g, dataset, model):
     model = DistributedDataParallel(model)
     
     if rank == 0:
-        load_core = list(range(0,4))
-        comp_core = list(range(4,38))
+        load_core = list(range(0,2))
+        comp_core = list(range(2,38))
     else:
-        load_core = list(range(38,42))
-        comp_core = list(range(42,74))
+        load_core = list(range(38,40))
+        comp_core = list(range(40,78))
+    # if rank == 0:
+    #     load_core = list(range(0,2))
+    #     comp_core = list(range(2,19))
+    # elif rank == 1:
+    #     load_core = list(range(19,21))
+    #     comp_core = list(range(21,38))
+    # elif rank == 2:
+    #     load_core = list(range(38,40))
+    #     comp_core = list(range(40,57))
+    # else:
+    #     load_core = list(range(57,59))
+    #     comp_core = list(range(59,76))
 
     train_idx = dataset.train_idx.to(device)
     val_idx = dataset.val_idx.to(device)
     sampler = NeighborSampler(
-        [15, 10, 5],  # fanout for [layer-0, layer-1, layer-2]
+        [25, 10],  # fanout for [layer-0, layer-1, layer-2]
         prefetch_node_feats=["feat"],
         prefetch_labels=["label"],
     )
@@ -137,10 +151,11 @@ def train(rank, size, args, device, g, dataset, model):
         train_idx,
         sampler,
         device=device,
-        batch_size=1024,
+        batch_size=4096,
+        use_ddp=True,
         shuffle=True,
         drop_last=False,
-        num_workers=4
+        num_workers=2
     )
 
     val_dataloader = DataLoader(
@@ -148,7 +163,8 @@ def train(rank, size, args, device, g, dataset, model):
         val_idx,
         sampler,
         device=device,
-        batch_size=1024,
+        batch_size=256,
+        use_ddp=True,
         shuffle=True,
         drop_last=False,
         num_workers=4
@@ -156,28 +172,43 @@ def train(rank, size, args, device, g, dataset, model):
 
     opt = torch.optim.Adam(model.parameters(), lr=1e-3, weight_decay=5e-4)
     
-    for epoch in range(6):
+    for epoch in range(10):
         start = time.time()
         model.train()
         total_loss = 0
+    
         # model, opt= ipex.optimize(model, optimizer=opt)
-        with train_dataloader.enable_cpu_affinity(loader_cores = load_core, compute_cores =  comp_core):
-            for it, (input_nodes, output_nodes, blocks) in enumerate(train_dataloader):
-                x = blocks[0].srcdata["feat"]
-                y = blocks[-1].dstdata["label"]
-                y_hat = model(blocks, x)
-                loss = F.cross_entropy(y_hat, y)
-                opt.zero_grad()
-                loss.backward()
-                opt.step()
-                total_loss += loss.item()
-            
-        acc = evaluate(model, g, val_dataloader, load_core, comp_core)
-        print(
-            "Epoch {:05d} | Loss {:.4f} | Accuracy {:.4f} ".format(
-                epoch, total_loss / (it + 1), acc.item()
-            )
-        )
+        if rank == 0:
+            # with profile(activities=[ProfilerActivity.CPU], record_shapes=True) as prof:
+            with train_dataloader.enable_cpu_affinity(loader_cores = load_core, compute_cores =  comp_core):
+                for it, (input_nodes, output_nodes, blocks) in enumerate(train_dataloader):
+                    x = blocks[0].srcdata["feat"]
+                    y = blocks[-1].dstdata["label"]
+                    y_hat = model(blocks, x)
+                    loss = F.cross_entropy(y_hat, y)
+                    opt.zero_grad()
+                    loss.backward()
+                    opt.step()
+                    total_loss += loss.item()
+            # prof.export_chrome_trace('single.trace')
+            # print(prof.key_averages().table(sort_by="self_cpu_time_total", row_limit=10))
+        else:
+            with train_dataloader.enable_cpu_affinity(loader_cores = load_core, compute_cores =  comp_core):
+                for it, (input_nodes, output_nodes, blocks) in enumerate(train_dataloader):
+                    x = blocks[0].srcdata["feat"]
+                    y = blocks[-1].dstdata["label"]
+                    y_hat = model(blocks, x)
+                    loss = F.cross_entropy(y_hat, y)
+                    opt.zero_grad()
+                    loss.backward()
+                    opt.step()
+                    total_loss += loss.item()
+        # acc = evaluate(model, g, val_dataloader, load_core, comp_core)
+        # print(
+        #     "Epoch {:05d} | Loss {:.4f} | Accuracy {:.4f} ".format(
+        #         epoch, total_loss / (it + 1), acc.item()
+        #     )
+        # )
         end = time.time()
         print(end - start, "sec")
 
@@ -199,6 +230,7 @@ if __name__ == "__main__":
     
     # load and preprocess dataset
     print("Loading data")
+    # dataset = AsNodePredDataset(DglNodePropPredDataset("ogbn-products",root="/data1/dgl"))
     dataset = AsNodePredDataset(DglNodePropPredDataset("ogbn-products"))
     g = dataset[0]
     g = g.to("cuda" if args.mode == "puregpu" else "cpu")
@@ -210,30 +242,29 @@ if __name__ == "__main__":
     model = SAGE(in_size, 128, out_size).to(device)
 
     # model training
-    # mp.set_start_method('spawn')
     size = 1
-    num_cores = psutil.cpu_count(logical=False) // size
     master_addr = '127.0.0.1'
     master_port = '29500'
     
-    start = time.time()
-    processes = []
     
+    processes = []
+
+    # tracer = VizTracer()
+    # tracer.start()
+    mp.set_start_method('fork')
+    start = time.time()
     for rank in range(size):
         p = dmp.Process(target=train, args=(rank, size, args, device, g, dataset, model))
         p.start()
         processes.append(p)
-
-    # Wait for the processes to finish
     for p in processes:
         p.join()
     end = time.time()
     print(end - start, "sec")
-
-
-
+    # tracer.stop()
+    # tracer.save(output_file="optional.json")
     # print(prof.key_averages().table(sort_by="self_cpu_time_total", row_limit=10))
+    # prof.export_chrome_trace("four_process.json")
 
-    # prof.export_chrome_trace("amd_one_socket.json")
     # acc = layerwise_infer(device, g, dataset.test_idx, model, batch_size=4096)
     # print("Test Accuracy {:.4f}".format(acc.item()))

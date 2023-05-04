@@ -1,0 +1,117 @@
+
+{
+  "schemaVersion": 1,
+  "traceEvents": [
+  {
+    "ph": "X", "cat": "cpu_op", "name": "aten::zeros", "pid": 3384515, "tid": 3384515,
+    "ts": 1683059297981415, "dur": 84,
+    "args": {
+      "Trace name": "PyTorch Profiler", "Trace iteration": 0,
+      "External id": 1,
+      "Profiler Event Index": 0, "Input Dims": [[], [], [], [], []], "Input type": ["", "", "", "", "Scalar"]
+    }
+  },
+  {
+    "ph": "X", "cat": "cpu_op", "name": "aten::empty", "pid": 3384515, "tid": 3384515,
+    "ts": 1683059297981437, "dur": 9,
+    "args": {
+      "Trace name": "PyTorch Profiler", "Trace iteration": 0,
+      "External id": 2,
+      "Profiler Event Index": 1, "Input Dims": [[], [], [], [], [], []], "Input type": ["", "", "", "", "Scalar", ""]
+    }
+  },
+  {
+    "ph": "X", "cat": "cpu_op", "name": "aten::zero_", "pid": 3384515, "tid": 3384515,
+    "ts": 1683059297981493, "dur": 6,
+    "args": {
+      "Trace name": "PyTorch Profiler", "Trace iteration": 0,
+      "External id": 3,
+      "Profiler Event Index": 2, "Input Dims": [[1]], "Input type": ["float"]
+    }
+  },
+  {
+    "ph": "X", "cat": "user_annotation", "name": "model_train", "pid": 3384515, "tid": 3384515,
+    "ts": 1683059297981558, "dur": 14849132,
+    "args": {
+      "Trace name": "PyTorch Profiler", "Trace iteration": 0,
+      "External id": 4,
+      "Profiler Event Index": 3
+    }
+  },
+  {
+    "ph": "X", "cat": "cpu_op", "name": "aten::empty", "pid": 3384515, "tid": 3384515,
+    "ts": 1683059297981573, "dur": 6,
+    "args": {
+      "Trace name": "PyTorch Profiler", "Trace iteration": 0,
+      "External id": 5,
+      "Profiler Event Index": 4, "Input Dims": [[], [], [], [], [], []], "Input type": ["", "Scalar", "", "", "", ""]
+    }
+  },
+  {
+    "name": "process_name", "ph": "M", "ts": 1683059297981230, "pid": 3384515, "tid": 0,
+    "args": {
+      "name": "python"
+    }
+  },
+  {
+    "name": "process_labels", "ph": "M", "ts": 1683059297981230, "pid": 3384515, "tid": 0,
+    "args": {
+      "labels": "CPU"
+    }
+  },
+  {
+    "name": "process_sort_index", "ph": "M", "ts": 1683059297981230, "pid": 3384515, "tid": 0,
+    "args": {
+      "sort_index": 3384515
+    }
+  },
+  {
+    "name": "thread_name", "ph": "M", "ts": 1683059297981230, "pid": 3384515, "tid": 3384515,
+    "args": {
+      "name": "thread 3384515 (python)"
+    }
+  },
+  {
+    "name": "thread_sort_index", "ph": "M", "ts": 1683059297981230, "pid": 3384515, "tid": 3384515,
+    "args": {
+      "sort_index": 3384515
+    }
+  },
+  {
+    "name": "thread_name", "ph": "M", "ts": 1683059297981230, "pid": 3384515, "tid": 3384515,
+    "args": {
+      "name": "thread 3384515 (python)"
+    }
+  },
+  {
+    "name": "thread_sort_index", "ph": "M", "ts": 1683059297981230, "pid": 3384515, "tid": 3384515,
+    "args": {
+      "sort_index": 3384515
+    }
+  },
+  {
+    "ph": "X", "cat": "Trace", "ts": 1683059297981097, "dur": 14849774,
+    "pid": "Spans", "tid": "PyTorch Profiler",
+    "name": "PyTorch Profiler (0)",
+    "args": {
+      "Op count": 0
+    }
+  },
+  {
+    "name": "process_sort_index", "ph": "M", "ts": 1683059297981097,
+    "pid": "Spans", "tid": 0,
+    "args": {
+      "sort_index": 536870912
+    }
+  },
+  {
+    "name": "Iteration Start: PyTorch Profiler", "ph": "i", "s": "g",
+    "pid": "Traces", "tid": "Trace PyTorch Profiler", "ts": 1683059297981097
+  },
+  {
+    "name": "Record Window End", "ph": "i", "s": "g",
+    "pid": "", "tid": "", "ts": 1683059312831658
+  }
+  ],
+  "traceName": "four_process.json"
+}
